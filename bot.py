@@ -34,9 +34,9 @@ from telegram.ext import (
 # -------------------------
 # Configuration - EDIT THESE
 # -------------------------
-BOT_TOKEN = "REPLACE_WITH_YOUR_BOT_TOKEN"
+BOT_TOKEN = "8389009323:AAHQ9oMOkOdhqgEFM1p5pB3V0napGLddCXE"
 # Admin Telegram user IDs (integers)
-ADMIN_IDS = [123456789]  # <-- replace with actual admin user IDs
+ADMIN_IDS = [1812962224]  # <-- replace with actual admin user IDs
 DB_FILE = "church_bot.db"
 BACKUP_DIR = "backups"
 # -------------------------
