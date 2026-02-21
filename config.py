@@ -2,5 +2,5 @@
 
 BOT_TOKEN=8594580402:AAEmCT-YzaZJC5XHHt0nyt1WbzQhC8ApudA
 ADMIN_IDS=1812962224,222222222  # comma-separated telegram user ids who are admins
-DB_PATH=data/church.db
+
 
