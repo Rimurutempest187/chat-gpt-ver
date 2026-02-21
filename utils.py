@@ -1,16 +1,11 @@
-from typing import List
-import os
+from datetime import datetime
+from config import CREATOR_TAG
 
-ADMIN_IDS = []  # filled from env by bot.py
+def now_iso():
+    return datetime.utcnow().isoformat()
 
+def format_event(row):
+    return f"**{row['title']}**\n{row['datetime']}\nLocation: {row['location']}\n{row['description']}"
 
-def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
-
-
-def format_event(ev: dict) -> str:
-    return f"{ev['title']}\nWhen: {ev['datetime']}\nWhere: {ev['location']}\n{ev['description']}"
-
-
-def format_contact(c: dict) -> str:
-    return f"{c['name']} — {c['phone']}"
+def footer():
+    return f"\n\nCreate by : {CREATOR_TAG}"
