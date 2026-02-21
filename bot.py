@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-# church_bot.py
-# Ready-to-run Telegram bot for Church Community with SQLite backend.
-# Requirements: python-telegram-bot==13.14, Pillow
+"""
+Church Community Bot - ready to run (python-telegram-bot v13.15)
+
+Save as bot.py. Use the accompanying requirements.txt and .env (see .env.example).
+"""
 
 import os
 import sqlite3
@@ -10,8 +12,10 @@ import shutil
 import random
 import datetime
 from io import BytesIO
+from dotenv import load_dotenv
 
-from PIL import Image
+from PIL import Image  # kept in requirements in case you later want to edit images
+
 from telegram import (
     Bot,
     Update,
@@ -29,25 +33,37 @@ from telegram.ext import (
     Filters,
     CallbackContext,
     ConversationHandler,
+    CallbackQueryHandler,
 )
 
-# -------------------------
-# Configuration - EDIT THESE
-# -------------------------
-BOT_TOKEN = "8389009323:AAHQ9oMOkOdhqgEFM1p5pB3V0napGLddCXE"
-# Admin Telegram user IDs (integers)
-ADMIN_IDS = [1812962224]  # <-- replace with actual admin user IDs
-DB_FILE = "church_bot.db"
-BACKUP_DIR = "backups"
-# -------------------------
+# Load environment variables from .env if present
+load_dotenv()
 
+# ------------------------- 
+# Configuration - EDIT THESE via .env
+# -------------------------
+BOT_TOKEN = os.getenv("BOT_TOKEN", "REPLACE_WITH_YOUR_BOT_TOKEN")
+# ADMIN_IDS can be a comma separated list in .env (e.g. "12345,98765")
+ADMIN_IDS = []
+admin_env = os.getenv("ADMIN_IDS", "")
+if admin_env:
+    try:
+        ADMIN_IDS = [int(x.strip()) for x in admin_env.split(",") if x.strip()]
+    except Exception:
+        ADMIN_IDS = []
+
+DB_FILE = os.getenv("DB_FILE", "church_bot.db")
+BACKUP_DIR = os.getenv("BACKUP_DIR", "backups")
+
+# -------------------------
 # Logging
+# -------------------------
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Conversation states for editing flows
+# Conversation states
 (
     EDABOUT_TEXT,
     EDCONTACT_ADD,
@@ -64,13 +80,14 @@ logger = logging.getLogger(__name__)
 # Ensure backup dir exists
 os.makedirs(BACKUP_DIR, exist_ok=True)
 
+
 # -------------------------
 # Database helpers
 # -------------------------
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    # about table
+    # about
     c.execute(
         """CREATE TABLE IF NOT EXISTS about (
             id INTEGER PRIMARY KEY,
@@ -133,7 +150,7 @@ def init_db():
             answer TEXT
         )"""
     )
-    # quiz scores
+    # quiz_scores
     c.execute(
         """CREATE TABLE IF NOT EXISTS quiz_scores (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -143,7 +160,7 @@ def init_db():
             last_played TEXT
         )"""
     )
-    # report
+    # reports
     c.execute(
         """CREATE TABLE IF NOT EXISTS reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -153,7 +170,7 @@ def init_db():
             created_at TEXT
         )"""
     )
-    # groups/chats where bot is added (for broadcast)
+    # chats (groups where bot has been active)
     c.execute(
         """CREATE TABLE IF NOT EXISTS chats (
             chat_id INTEGER PRIMARY KEY,
@@ -165,22 +182,27 @@ def init_db():
 
 
 def db_execute(query, params=(), fetch=False, many=False):
+    """
+    Simple sqlite helper.
+    - If many=True -> expects params to be an iterable of tuples and calls executemany.
+    - If fetch=True -> returns rows (list of tuples)
+    """
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    if many:
-        c.executemany(query, params)
+    try:
+        if many:
+            c.executemany(query, params)
+            conn.commit()
+            return None
+        c.execute(query, params)
+        if fetch:
+            rows = c.fetchall()
+            conn.commit()
+            return rows
         conn.commit()
-        conn.close()
         return None
-    c.execute(query, params)
-    if fetch:
-        rows = c.fetchall()
-        conn.commit()
+    finally:
         conn.close()
-        return rows
-    conn.commit()
-    conn.close()
-    return None
 
 
 # -------------------------
@@ -201,6 +223,12 @@ def format_datetime(dt_str):
 # -------------------------
 # Bot command handlers
 # -------------------------
+
+# --- Generic cancel handler for conversations ---
+def cancel(update: Update, context: CallbackContext):
+    update.message.reply_text("Cancelled.")
+    return ConversationHandler.END
+
 
 # --- User commands ---
 def start(update: Update, context: CallbackContext):
@@ -258,8 +286,8 @@ def events(update: Update, context: CallbackContext):
         return
     out = "လာမည့် အစီအစဉ်များ:\n\n"
     for r in rows:
-        out += f"**{r[0]}**\n{format_datetime(r[1])} @ {r[2]}\n{r[3]}\n\n"
-    update.message.reply_text(out, parse_mode=ParseMode.MARKDOWN)
+        out += f"<b>{r[0]}</b>\n{format_datetime(r[1])} @ {r[2]}\n{r[3]}\n\n"
+    update.message.reply_text(out, parse_mode=ParseMode.HTML)
 
 
 def birthday(update: Update, context: CallbackContext):
@@ -324,14 +352,17 @@ def quiz(update: Update, context: CallbackContext):
     qid = q[0]
     question = q[1]
     choices = [q[2], q[3], q[4], q[5]]
-    # store current question in user_data
+    # store current question in user_data keyed by user id to support multiple users
     context.user_data['current_quiz'] = qid
     keyboard = [
         [InlineKeyboardButton("A", callback_data="quiz_A"), InlineKeyboardButton("B", callback_data="quiz_B")],
         [InlineKeyboardButton("C", callback_data="quiz_C"), InlineKeyboardButton("D", callback_data="quiz_D")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    update.message.reply_text(f"{question}\n\nA. {choices[0]}\nB. {choices[1]}\nC. {choices[2]}\nD. {choices[3]}", reply_markup=reply_markup)
+    update.message.reply_text(
+        f"{question}\n\nA. {choices[0]}\nB. {choices[1]}\nC. {choices[2]}\nD. {choices[3]}",
+        reply_markup=reply_markup,
+    )
 
 
 def tops(update: Update, context: CallbackContext):
@@ -362,7 +393,7 @@ def report_cmd(update: Update, context: CallbackContext):
 # --- Inline callback for quiz answers ---
 def callback_query_handler(update: Update, context: CallbackContext):
     query = update.callback_query
-    user = update.effective_user
+    user = query.from_user
     data = query.data  # e.g., quiz_A
     query.answer()
     if data.startswith("quiz_"):
@@ -375,11 +406,11 @@ def callback_query_handler(update: Update, context: CallbackContext):
         if not rows:
             query.edit_message_text("မေးခွန်းကို ရှာမတွေ့ပါ။")
             return
-        correct = rows[0][0].strip().upper()
+        correct = (rows[0][0] or "").strip().upper()
         if choice == correct:
             # update score
             prev = db_execute("SELECT score FROM quiz_scores WHERE user_id=?", (user.id,), fetch=True)
-            if prev:
+            if prev and len(prev) and prev[0][0] is not None:
                 new_score = prev[0][0] + 1
                 db_execute("UPDATE quiz_scores SET score=?, last_played=? WHERE user_id=?", (new_score, datetime.datetime.utcnow().isoformat(), user.id))
             else:
@@ -396,7 +427,7 @@ def edabout_start(update: Update, context: CallbackContext):
     if not is_admin(user.id):
         update.message.reply_text("Admin မဟုတ်ပါ။")
         return ConversationHandler.END
-    update.message.reply_text("အသင်းတော် သမိုင်းနှင့် ရည်ရွယ်ချက်ကို ရေးထည့်ပါ။ (သတ်မှတ်ပြီး /cancel ဖြင့် ပယ်ဖျက်နိုင်သည်)")
+    update.message.reply_text("အသင်းတော် သမိုင်းနှင့် ရည်ရွယ်ချက်ကို ရေးထည့်ပါ။ (ရိုက်ပြီး /cancel ဖြင့် ပယ်ဖျက်နိုင်သည်)")
     return EDABOUT_TEXT
 
 
@@ -439,19 +470,23 @@ def edverse_start(update: Update, context: CallbackContext):
 
 def edverse_add(update: Update, context: CallbackContext):
     text = update.message.text.strip()
-    if text.lower() == "/done":
-        buffer = context.user_data.pop('edverse_buffer', [])
-        if buffer:
-            db_execute("DELETE FROM verses")
-            db_execute("INSERT INTO verses (text) VALUES (?)", [(b,) for b in buffer], many=True)
-            update.message.reply_text(f"{len(buffer)} verse(s) ထည့်ပြီးပါပြီ။")
-        else:
-            update.message.reply_text("Verse မရှိပါ။")
-        return ConversationHandler.END
+    # append to buffer
+    context.user_data.setdefault('edverse_buffer', []).append(text)
+    update.message.reply_text("ထည့်ပြီး — နောက်တစ်ကြောင်းထည့်ပါ သို့မဟုတ် /done ဖြင့် ပြီးစီးပါ။")
+    return EDVERSE_ADD
+
+
+def edverse_done(update: Update, context: CallbackContext):
+    buffer = context.user_data.pop('edverse_buffer', [])
+    if buffer:
+        db_execute("DELETE FROM verses")
+        # prepare tuples for executemany
+        tuples = [(b,) for b in buffer]
+        db_execute("INSERT INTO verses (text) VALUES (?)", tuples, many=True)
+        update.message.reply_text(f"{len(buffer)} verse(s) ထည့်ပြီးပါပြီ။")
     else:
-        context.user_data.setdefault('edverse_buffer', []).append(text)
-        update.message.reply_text("ထည့်ပြီး — နောက်တစ်ကြောင်းထည့်ပါ သို့မဟုတ် /done ဖြင့် ပြီးစီးပါ။")
-        return EDVERSE_ADD
+        update.message.reply_text("Verse မရှိပါ။")
+    return ConversationHandler.END
 
 
 def edevents_start(update: Update, context: CallbackContext):
@@ -466,24 +501,27 @@ def edevents_start(update: Update, context: CallbackContext):
 
 def edevents_add(update: Update, context: CallbackContext):
     text = update.message.text.strip()
-    if text.lower() == "/done":
-        buffer = context.user_data.pop('edevents_buffer', [])
-        if buffer:
-            db_execute("DELETE FROM events")
-            for item in buffer:
-                parts = [p.strip() for p in item.split("|")]
-                if len(parts) < 4:
-                    continue
-                title, dt, loc, desc = parts[0], parts[1], parts[2], parts[3]
-                db_execute("INSERT INTO events (title, datetime, location, description) VALUES (?, ?, ?, ?)", (title, dt, loc, desc))
-            update.message.reply_text(f"{len(buffer)} event(s) ထည့်ပြီးပါပြီ။")
-        else:
-            update.message.reply_text("Event မရှိပါ။")
-        return ConversationHandler.END
+    context.user_data.setdefault('edevents_buffer', []).append(text)
+    update.message.reply_text("ထည့်ပြီး — နောက်တစ်ကြောင်းထည့်ပါ သို့မဟုတ် /done ဖြင့် ပြီးစီးပါ။")
+    return EDEVENTS_ADD
+
+
+def edevents_done(update: Update, context: CallbackContext):
+    buffer = context.user_data.pop('edevents_buffer', [])
+    if buffer:
+        db_execute("DELETE FROM events")
+        inserted = 0
+        for item in buffer:
+            parts = [p.strip() for p in item.split("|")]
+            if len(parts) < 4:
+                continue
+            title, dt, loc, desc = parts[0], parts[1], parts[2], parts[3]
+            db_execute("INSERT INTO events (title, datetime, location, description) VALUES (?, ?, ?, ?)", (title, dt, loc, desc))
+            inserted += 1
+        update.message.reply_text(f"{inserted} event(s) ထည့်ပြီးပါပြီ။")
     else:
-        context.user_data.setdefault('edevents_buffer', []).append(text)
-        update.message.reply_text("ထည့်ပြီး — နောက်တစ်ကြောင်းထည့်ပါ သို့မဟုတ် /done ဖြင့် ပြီးစီးပါ။")
-        return EDEVENTS_ADD
+        update.message.reply_text("Event မရှိပါ။")
+    return ConversationHandler.END
 
 
 def edbirthday_start(update: Update, context: CallbackContext):
@@ -498,27 +536,30 @@ def edbirthday_start(update: Update, context: CallbackContext):
 
 def edbirthday_add(update: Update, context: CallbackContext):
     text = update.message.text.strip()
-    if text.lower() == "/done":
-        buffer = context.user_data.pop('edbirthday_buffer', [])
-        if buffer:
-            db_execute("DELETE FROM birthdays")
-            for item in buffer:
-                if "-" not in item:
-                    continue
-                name, dm = [s.strip() for s in item.split("-", 1)]
-                try:
-                    day, month = [int(x) for x in dm.split("-")]
-                except Exception:
-                    continue
-                db_execute("INSERT INTO birthdays (name, day, month) VALUES (?, ?, ?)", (name, day, month))
-            update.message.reply_text(f"{len(buffer)} birthday(s) ထည့်ပြီးပါပြီ။")
-        else:
-            update.message.reply_text("Birthday မရှိပါ။")
-        return ConversationHandler.END
+    context.user_data.setdefault('edbirthday_buffer', []).append(text)
+    update.message.reply_text("ထည့်ပြီး — နောက်တစ်ကြောင်းထည့်ပါ သို့မဟုတ် /done ဖြင့် ပြီးစီးပါ။")
+    return EDBIRTHDAY_ADD
+
+
+def edbirthday_done(update: Update, context: CallbackContext):
+    buffer = context.user_data.pop('edbirthday_buffer', [])
+    if buffer:
+        db_execute("DELETE FROM birthdays")
+        inserted = 0
+        for item in buffer:
+            if "-" not in item:
+                continue
+            name, dm = [s.strip() for s in item.split("-", 1)]
+            try:
+                day, month = [int(x) for x in dm.split("-")]
+            except Exception:
+                continue
+            db_execute("INSERT INTO birthdays (name, day, month) VALUES (?, ?, ?)", (name, day, month))
+            inserted += 1
+        update.message.reply_text(f"{inserted} birthday(s) ထည့်ပြီးပါပြီ။")
     else:
-        context.user_data.setdefault('edbirthday_buffer', []).append(text)
-        update.message.reply_text("ထည့်ပြီး — နောက်တစ်ကြောင်းထည့်ပါ သို့မဟုတ် /done ဖြင့် ပြီးစီးပါ။")
-        return EDBIRTHDAY_ADD
+        update.message.reply_text("Birthday မရှိပါ။")
+    return ConversationHandler.END
 
 
 def edquiz_start(update: Update, context: CallbackContext):
@@ -526,13 +567,12 @@ def edquiz_start(update: Update, context: CallbackContext):
     if not is_admin(user.id):
         update.message.reply_text("Admin မဟုတ်ပါ။")
         return ConversationHandler.END
-    update.message.reply_text("Quiz များထည့်ရန် စတင်ပါမည်။\nပထမဦးဆုံး မေးခွန်းကို ပေးပို့ပါ။ (ပြီးရင် /cancel သို့မဟုတ် /done)")
+    update.message.reply_text("Quiz များထည့်ရန် စတင်ပါမည်။\nပထမဦးဆုံး မေးခွန်းကို ပေးပို့ပါ။ (ပြီးရင် /done သို့မဟုတ် /cancel)")
     context.user_data['edquiz_buffer'] = []
     return EDQUIZ_ADD_Q
 
 
 def edquiz_q(update: Update, context: CallbackContext):
-    # Expect question line; then bot will ask for choices in sequence
     qtext = update.message.text.strip()
     context.user_data['edquiz_current'] = {'question': qtext}
     update.message.reply_text("Choice A ကို ပေးပို့ပါ။")
@@ -542,6 +582,7 @@ def edquiz_q(update: Update, context: CallbackContext):
 def edquiz_a(update: Update, context: CallbackContext):
     text = update.message.text.strip()
     cur = context.user_data.get('edquiz_current', {})
+    # sequentially collect choices A-D then answer
     if 'choice_a' not in cur:
         cur['choice_a'] = text
         context.user_data['edquiz_current'] = cur
@@ -596,15 +637,17 @@ def broadcast_start(update: Update, context: CallbackContext):
     if not is_admin(user.id):
         update.message.reply_text("Admin မဟုတ်ပါ။")
         return ConversationHandler.END
-    update.message.reply_text("Broadcast ပို့ရန် စတင်ပါသည်။ ပုံနှင့်စာနှစ်မျိုးလုံးပို့နိုင်သည်။\nပုံနှင့်စာပို့ရန် ပုံကို ပထမဦးစွာ upload ပြီးနောက် caption ထည့်ပါ။\nသို့မဟုတ် စာတစ်ခုတည်းပို့ရန် စာကိုပေးပို့ပါ။")
+    update.message.reply_text(
+        "Broadcast ပို့ရန် စတင်ပါသည်။ ပုံနှင့်စာနှစ်မျိုးလုံးပို့နိုင်သည်။\n"
+        "ပုံနှင့်စာပို့ရန် ပုံကို ပထမဦးစွာ upload ပြီးနောက် caption ထည့်ပါ။\n"
+        "သို့မဟုတ် စာတစ်ခုတည်းပို့ရန် စာကိုပေးပို့ပါ။"
+    )
     return BROADCAST_TEXT
 
 
 def broadcast_send(update: Update, context: CallbackContext):
     user = update.effective_user
-    # Determine if message contains photo or text
     msg = update.message
-    # collect chat ids
     chats = db_execute("SELECT chat_id FROM chats", fetch=True)
     if not chats:
         update.message.reply_text("Broadcast ပို့ရန် chat မရှိသေးပါ။ Bot ကို group/chat တွင် add လုပ်ပါ။")
@@ -614,7 +657,6 @@ def broadcast_send(update: Update, context: CallbackContext):
     failed = 0
     # If photo
     if msg.photo:
-        # get highest resolution
         photo = msg.photo[-1]
         file_id = photo.file_id
         caption = msg.caption or ""
@@ -689,7 +731,6 @@ def restore_confirm(update: Update, context: CallbackContext):
     file.download(tmp_path)
     # Replace DB file
     try:
-        # close any open connections by reinitializing (best-effort)
         shutil.copyfile(tmp_path, DB_FILE)
         update.message.reply_text("Restore ပြီးစီးပါပြီ။ Bot ကို restart လိုအပ်နိုင်သည်။")
     except Exception as e:
@@ -721,7 +762,7 @@ def allclear_cmd(update: Update, context: CallbackContext):
 def new_chat_member_handler(update: Update, context: CallbackContext):
     # store chat id when bot is added to group or when any message in group
     chat = update.effective_chat
-    if chat.type in ("group", "supergroup"):
+    if chat and chat.type in ("group", "supergroup"):
         try:
             db_execute("INSERT OR REPLACE INTO chats (chat_id, title) VALUES (?, ?)", (chat.id, chat.title))
         except Exception:
@@ -744,7 +785,7 @@ def build_conversation_handlers(dispatcher):
     conv_edabout = ConversationHandler(
         entry_points=[CommandHandler("edabout", edabout_start)],
         states={EDABOUT_TEXT: [MessageHandler(Filters.text & ~Filters.command, edabout_save)]},
-        fallbacks=[CommandHandler("cancel", lambda u, c: (u.message.reply_text("Cancelled."), ConversationHandler.END)[1])],
+        fallbacks=[CommandHandler("cancel", cancel)],
     )
     dispatcher.add_handler(conv_edabout)
 
@@ -752,15 +793,17 @@ def build_conversation_handlers(dispatcher):
     conv_edcontact = ConversationHandler(
         entry_points=[CommandHandler("edcontact", edcontact_start)],
         states={EDCONTACT_ADD: [MessageHandler(Filters.text & ~Filters.command, edcontact_add)]},
-        fallbacks=[CommandHandler("cancel", lambda u, c: (u.message.reply_text("Cancelled."), ConversationHandler.END)[1])],
+        fallbacks=[CommandHandler("cancel", cancel)],
     )
     dispatcher.add_handler(conv_edcontact)
 
     # edverse
     conv_edverse = ConversationHandler(
         entry_points=[CommandHandler("edverse", edverse_start)],
-        states={EDVERSE_ADD: [MessageHandler(Filters.text & ~Filters.command, edverse_add)]},
-        fallbacks=[CommandHandler("cancel", lambda u, c: (u.message.reply_text("Cancelled."), ConversationHandler.END)[1])],
+        states={
+            EDVERSE_ADD: [MessageHandler(Filters.text & ~Filters.command, edverse_add)],
+        },
+        fallbacks=[CommandHandler("done", edverse_done), CommandHandler("cancel", cancel)],
     )
     dispatcher.add_handler(conv_edverse)
 
@@ -768,7 +811,7 @@ def build_conversation_handlers(dispatcher):
     conv_edevents = ConversationHandler(
         entry_points=[CommandHandler("edevents", edevents_start)],
         states={EDEVENTS_ADD: [MessageHandler(Filters.text & ~Filters.command, edevents_add)]},
-        fallbacks=[CommandHandler("cancel", lambda u, c: (u.message.reply_text("Cancelled."), ConversationHandler.END)[1])],
+        fallbacks=[CommandHandler("done", edevents_done), CommandHandler("cancel", cancel)],
     )
     dispatcher.add_handler(conv_edevents)
 
@@ -776,7 +819,7 @@ def build_conversation_handlers(dispatcher):
     conv_edbirthday = ConversationHandler(
         entry_points=[CommandHandler("edbirthday", edbirthday_start)],
         states={EDBIRTHDAY_ADD: [MessageHandler(Filters.text & ~Filters.command, edbirthday_add)]},
-        fallbacks=[CommandHandler("cancel", lambda u, c: (u.message.reply_text("Cancelled."), ConversationHandler.END)[1])],
+        fallbacks=[CommandHandler("done", edbirthday_done), CommandHandler("cancel", cancel)],
     )
     dispatcher.add_handler(conv_edbirthday)
 
@@ -789,7 +832,7 @@ def build_conversation_handlers(dispatcher):
         },
         fallbacks=[
             CommandHandler("done", edquiz_done),
-            CommandHandler("cancel", lambda u, c: (u.message.reply_text("Cancelled."), ConversationHandler.END)[1]),
+            CommandHandler("cancel", cancel),
         ],
     )
     dispatcher.add_handler(conv_edquiz)
@@ -798,7 +841,7 @@ def build_conversation_handlers(dispatcher):
     conv_broadcast = ConversationHandler(
         entry_points=[CommandHandler("broadcast", broadcast_start)],
         states={BROADCAST_TEXT: [MessageHandler(Filters.text | Filters.photo, broadcast_send)]},
-        fallbacks=[CommandHandler("cancel", lambda u, c: (u.message.reply_text("Cancelled."), ConversationHandler.END)[1])],
+        fallbacks=[CommandHandler("cancel", cancel)],
     )
     dispatcher.add_handler(conv_broadcast)
 
@@ -806,7 +849,7 @@ def build_conversation_handlers(dispatcher):
     conv_restore = ConversationHandler(
         entry_points=[CommandHandler("restore", restore_start)],
         states={RESTORE_WAIT_FILE: [MessageHandler(Filters.document, restore_confirm)]},
-        fallbacks=[CommandHandler("cancel", lambda u, c: (u.message.reply_text("Cancelled."), ConversationHandler.END)[1])],
+        fallbacks=[CommandHandler("cancel", cancel)],
     )
     dispatcher.add_handler(conv_restore)
 
@@ -816,6 +859,7 @@ def build_conversation_handlers(dispatcher):
 # -------------------------
 def main():
     init_db()
+
     updater = Updater(BOT_TOKEN, use_context=True)
     dp = updater.dispatcher
 
@@ -837,30 +881,17 @@ def main():
     dp.add_handler(CommandHandler("stats", stats_cmd))
     dp.add_handler(CommandHandler("backup", backup_cmd))
     dp.add_handler(CommandHandler("allclear", allclear_cmd))
+    dp.add_handler(CommandHandler("restore", restore_start))
 
     # Callback query for quiz answers
+    dp.add_handler(CallbackQueryHandler(callback_query_handler))
+
+    # Group tracking
     dp.add_handler(MessageHandler(Filters.status_update.new_chat_members, new_chat_member_handler))
     dp.add_handler(MessageHandler(Filters.text & Filters.group, new_chat_member_handler))
-    dp.add_handler(MessageHandler(Filters.command, unknown))  # unknown commands fallback
-    dp.add_handler(dp.add_handler if False else MessageHandler(Filters.all, lambda u, c: None))  # placeholder
 
-    dp.add_handler(CommandHandler("edabout", edabout_start))  # conversation handler will override
-    # Add callback query handler
-    dp.add_handler(CommandHandler("backup", backup_cmd))
-    dp.add_handler(CommandHandler("restore", restore_start))
-    dp.add_handler(CommandHandler("edcontact", edcontact_start))
-    dp.add_handler(CommandHandler("edverse", edverse_start))
-    dp.add_handler(CommandHandler("edevents", edevents_start))
-    dp.add_handler(CommandHandler("edbirthday", edbirthday_start))
-    dp.add_handler(CommandHandler("edquiz", edquiz_start))
-    dp.add_handler(CommandHandler("broadcast", broadcast_start))
-    dp.add_handler(CommandHandler("stats", stats_cmd))
-    dp.add_handler(CommandHandler("allclear", allclear_cmd))
-
-    # CallbackQueryHandler for inline buttons
-    from telegram.ext import CallbackQueryHandler
-
-    dp.add_handler(CallbackQueryHandler(callback_query_handler))
+    # Unknown command fallback
+    dp.add_handler(MessageHandler(Filters.command, unknown))
 
     # Build conversation handlers (adds them to dispatcher)
     build_conversation_handlers(dp)
