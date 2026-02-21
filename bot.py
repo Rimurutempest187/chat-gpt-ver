@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Church Community Telegram Bot — Polished Ready-to-run (python-telegram-bot v20+)
+Church Community Telegram Bot — Fixed and Polished (python-telegram-bot v20+)
 Create by : @Enoch_777
 """
 
@@ -131,6 +131,7 @@ def is_admin(user_id: Optional[int]) -> bool:
 def admin_only(func):
     @wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        # Support both message and callback_query contexts
         user = update.effective_user
         uid = user.id if user else None
         if not is_admin(uid):
@@ -139,7 +140,13 @@ def admin_only(func):
             elif update.message:
                 await update.message.reply_text("ဤ command ကို Admin များသာ အသုံးပြုနိုင်ပါသည်။")
             return
-        return await func(update, context, *args, **kwargs)
+        try:
+            return await func(update, context, *args, **kwargs)
+        except Exception as e:
+            logger.exception("Admin command error: %s", e)
+            if update.message:
+                await update.message.reply_text("Admin command အတွင်း အမှားတက်နေပါသည်။ Log ကိုစစ်ပါ။")
+            return
 
     return wrapper
 
@@ -147,49 +154,62 @@ def admin_only(func):
 def save_user(user):
     if not user:
         return
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT OR REPLACE INTO users (user_id, username, first_name, last_name, started_at) VALUES (?, ?, ?, ?, ?)",
-        (user.id, user.username or "", user.first_name or "", user.last_name or "", datetime.utcnow().isoformat()),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT OR REPLACE INTO users (user_id, username, first_name, last_name, started_at) VALUES (?, ?, ?, ?, ?)",
+            (user.id, user.username or "", user.first_name or "", user.last_name or "", datetime.utcnow().isoformat()),
+        )
+        conn.commit()
+    except Exception:
+        logger.exception("Failed to save user")
+    finally:
+        conn.close()
 
 
 def save_group(chat: Chat):
     if not chat:
         return
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT OR REPLACE INTO groups (group_id, title, added_at) VALUES (?, ?, ?)",
-        (chat.id, chat.title or "", datetime.utcnow().isoformat()),
-    )
-    conn.commit()
-    conn.close()
-
-
-def html(text: str) -> dict:
-    return {"text": text, "parse_mode": ParseMode.HTML}
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT OR REPLACE INTO groups (group_id, title, added_at) VALUES (?, ?, ?)",
+            (chat.id, chat.title or "", datetime.utcnow().isoformat()),
+        )
+        conn.commit()
+    except Exception:
+        logger.exception("Failed to save group")
+    finally:
+        conn.close()
 
 
 # --- Command Handlers -----------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    save_user(user)
-    welcome = (
-        f"မင်္ဂလာပါ <b>{user.first_name or user.username or 'အသုံးပြုသူ'}</b>!\n\n"
-        "Church Community Bot သို့ ကြိုဆိုပါသည်။\n\n"
-        "အသုံးပြုနိုင်သော command များအတွက် /help ကိုနှိပ်ပါ။\n\n"
-        "<i>Create by : @Enoch_777</i>"
-    )
-    await update.message.reply_html(welcome)
+    try:
+        user = update.effective_user
+        save_user(user)
+        welcome = (
+            f"မင်္ဂလာပါ <b>{user.first_name or user.username or 'အသုံးပြုသူ'}</b>!\n\n"
+            "Church Community Bot သို့ ကြိုဆိုပါသည်။\n\n"
+            "အသုံးပြုနိုင်သော command များအတွက် /help ကိုနှိပ်ပါ။\n\n"
+            "<i>Create by : @Enoch_777</i>"
+        )
+        await update.message.reply_html(welcome)
+    except Exception:
+        logger.exception("Error in /start")
+        await update.message.reply_text("Start command အတွင်း အမှားတက်နေပါသည်။")
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Use reply_text with parse_mode to avoid compatibility issues
     help_text = (
-       "/about - အသင်းတော် သမိုင်းနှင့် ရည်ရွယ်ချက်\n"
+        "<b>အသုံးပြုနည်း လမ်းညွှန်</b>\n\n"
+        "<b>Users</b>\n"
+        "/start - စတင်\n"
+        "/help - လမ်းညွှန်\n"
+        "/about - အသင်းတော် သမိုင်းနှင့် ရည်ရွယ်ချက်\n"
         "/contact - တာဝန်ခံ ဖုန်းနံပါတ်များ\n"
         "/verse - ယနေ့ဖတ်ရန် ကျမ်းချက် (Random)\n"
         "/events - လာမည့် အစီအစဉ်များ\n"
@@ -199,9 +219,22 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/quiz - Random quiz (A/B/C/D)\n"
         "/Tops - Quiz leaderboard\n"
         "/report <text> - အကြောင်းအရာ တင်ပြရန်\n\n"
+        "<b>Admins</b>\n"
+        "/edabout - About edit\n"
+        "/edcontact - Contacts edit\n"
+        "/edverse - Add verses\n"
+        "/edevents - Events edit\n"
+        "/edbirthday - Birthdays edit\n"
+        "/edquiz - Add quizzes\n"
+        "/broadcast - Broadcast to groups (reply to message or /broadcast text)\n"
+        "/stats - Users/Groups count\n"
+        "/backup - Send DB file\n"
+        "/restore - Reply with DB file then /restore\n"
+        "/allclear - Reset all data\n\n"
         "<i>Create by : @Enoch_777</i>"
     )
-    await update.message.reply_text(help_text, parse_mode="HTML")
+    # reply_text with parse_mode is more robust across versions
+    await update.message.reply_text(help_text, parse_mode=ParseMode.HTML)
 
 
 # About
@@ -247,7 +280,7 @@ async def contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Contact မရှိသေးပါ။")
         return
     lines = [f"• <b>{r[0]}</b> — {r[1]}" for r in rows]
-    await update.message.reply_html("<b>တာဝန်ခံများ</b>\n\n" + "\n".join(lines))
+    await update.message.reply_text("<b>တာဝန်ခံများ</b>\n\n" + "\n".join(lines), parse_mode=ParseMode.HTML)
 
 
 @admin_only
@@ -318,7 +351,7 @@ async def events(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Events မရှိသေးပါ။")
         return
     text = "<b>လာမည့် အစီအစဉ်များ</b>\n\n" + "\n\n".join([r[0] for r in rows])
-    await update.message.reply_html(text)
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 
 @admin_only
@@ -353,7 +386,7 @@ async def birthday(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Birthday မရှိသေးပါ။")
         return
     lines = [f"• <b>{r[0]}</b> — {r[1]}/{r[2]}" for r in rows]
-    await update.message.reply_html("<b>မွေးနေ့စာရင်း</b>\n\n" + "\n".join(lines))
+    await update.message.reply_text("<b>မွေးနေ့စာရင်း</b>\n\n" + "\n".join(lines), parse_mode=ParseMode.HTML)
 
 
 @admin_only
@@ -457,7 +490,7 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("A", callback_data=f"quiz|{qid}|A"), InlineKeyboardButton("B", callback_data=f"quiz|{qid}|B")],
         [InlineKeyboardButton("C", callback_data=f"quiz|{qid}|C"), InlineKeyboardButton("D", callback_data=f"quiz|{qid}|D")],
     ]
-    await update.message.reply_html(f"<b>Quiz</b>\n\n{question}\n\nA. {a}\nB. {b}\nC. {c_opt}\nD. {d}", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text(f"<b>Quiz</b>\n\n{question}\n\nA. {a}\nB. {b}\nC. {c_opt}\nD. {d}", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def quiz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -510,7 +543,7 @@ async def tops(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("အမှတ်စာရင်း မရှိသေးပါ။")
         return
     lines = [f"• @{r[0]} — {r[1]}" for r in rows]
-    await update.message.reply_html("<b>Quiz Leaderboard</b>\n\n" + "\n".join(lines))
+    await update.message.reply_text("<b>Quiz Leaderboard</b>\n\n" + "\n".join(lines), parse_mode=ParseMode.HTML)
 
 
 # Broadcast / Stats / Report / Backup / Restore / Allclear
@@ -623,11 +656,14 @@ async def allclear(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Generic listener to capture groups and users
 async def message_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if chat and chat.type in ("group", "supergroup"):
-        save_group(chat)
-    if update.effective_user and chat and chat.type == "private":
-        save_user(update.effective_user)
+    try:
+        chat = update.effective_chat
+        if chat and chat.type in ("group", "supergroup"):
+            save_group(chat)
+        if update.effective_user and chat and chat.type == "private":
+            save_user(update.effective_user)
+    except Exception:
+        logger.exception("Error in message_listener")
 
 
 # Error handler
