@@ -189,9 +189,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
-        "<b>အသုံးပြုနည်း လမ်းညွှန်</b>\n\n"
-        "<b>Users</b>\n"
-        "/about - အသင်းတော် သမိုင်းနှင့် ရည်ရွယ်ချက်\n"
+       "/about - အသင်းတော် သမိုင်းနှင့် ရည်ရွယ်ချက်\n"
         "/contact - တာဝန်ခံ ဖုန်းနံပါတ်များ\n"
         "/verse - ယနေ့ဖတ်ရန် ကျမ်းချက် (Random)\n"
         "/events - လာမည့် အစီအစဉ်များ\n"
