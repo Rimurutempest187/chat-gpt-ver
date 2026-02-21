@@ -1,16 +1,10 @@
 # Church Community Telegram Bot
 
-## Setup
-1. Copy `.env.example` to `.env` and fill `BOT_TOKEN` and `ADMIN_IDS`.
-2. Install requirements: `pip install -r requirements.txt`
-3. Run: `python bot.py`
+## ပြင်ဆင်ရန်
+1. Python 3.8+ ကို သေချာထည့်ထားပါ။
+2. `config.py` ထဲတွင် `BOT_TOKEN` ကို သင့် token ဖြင့် ပြောင်းပါ။
+3. `config.py` ထဲတွင် `ADMIN_IDS` ကို admin user id များထည့်ပါ။
 
-## Admin Notes
-- Admin IDs must be Telegram numeric user IDs separated by commas.
-- Use `/eabout`, `/econtact`, `/eevents`, `/ebirthday` to edit content.
-- Use `/broadcast` to send message/photo to all users.
-- Use `/backup` to download DB; `/restore` to upload DB file.
-- `/allclear` will delete all data.
-
-## DB
-- SQLite file at `data/church.db`.
+## 설치
+```bash
+pip install -r requirements.txt
