@@ -1,144 +1,100 @@
+# db.py
 import sqlite3
-from typing import List, Tuple, Optional
 import os
-from config import DB_PATH
+from config import DB_FILE
+import threading
 
-os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+_lock = threading.Lock()
 
 def get_conn():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(DB_FILE, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
 def init_db():
+    if not os.path.exists(DB_FILE):
+        conn = get_conn()
+        cur = conn.cursor()
+        with open("data_init.sql", "r", encoding="utf-8") as f:
+            cur.executescript(f.read())
+        conn.commit()
+        conn.close()
+    # ensure initial seed data
+    seed_initial_data()
+
+def seed_initial_data():
     conn = get_conn()
     cur = conn.cursor()
-    # users
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY,
-        username TEXT,
-        first_name TEXT,
-        last_name TEXT,
-        joined_at TEXT
-    )
-    """)
-    # about (single row)
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS about (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        content TEXT
-    )
-    """)
-    # contacts
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS contacts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        phone TEXT
-    )
-    """)
-    # daily verses
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS verses (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        verse TEXT,
-        date TEXT
-    )
-    """)
-    # events
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT,
-        datetime TEXT,
-        location TEXT,
-        description TEXT
-    )
-    """)
-    # birthdays
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS birthdays (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        day INTEGER,
-        month INTEGER,
-        note TEXT
-    )
-    """)
-    # prayers
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS prayers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        username TEXT,
-        text TEXT,
-        created_at TEXT
-    )
-    """)
-    # prayer list (same as prayers)
-    # quiz questions
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS quiz (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        question TEXT,
-        choice_a TEXT,
-        choice_b TEXT,
-        choice_c TEXT,
-        choice_d TEXT,
-        answer CHAR(1)
-    )
-    """)
-    # quiz scores
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS scores (
-        user_id INTEGER,
-        username TEXT,
-        score INTEGER,
-        PRIMARY KEY (user_id)
-    )
-    """)
-    # reports
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS reports (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        username TEXT,
-        text TEXT,
-        created_at TEXT
-    )
-    """)
+    # about default
+    cur.execute("SELECT COUNT(*) FROM about")
+    if cur.fetchone()[0] == 0:
+        cur.execute("INSERT INTO about (id, text) VALUES (1, ?)", (
+            "ကျွန်ုပ်တို့၏ အသင်းတော်သည် ခရစ်ယာန် လူငယ်များအတွက် စည်းရုံးရာ၊ ဝန်ဆောင်မှုနှင့် သင်ကြားရေး အဖွဲ့ဖြစ်ပါသည်။",))
+    # sample verses (5)
+    cur.execute("SELECT COUNT(*) FROM verses")
+    if cur.fetchone()[0] == 0:
+        verses = [
+            "ယေရှုခရစ်သည် ကျွန်တော်တို့၏ အလင်းဖြစ်၏။ (John 8:12)",
+            "ခင်ဗျားတို့သည် အချစ်ကို ခံစားကြပါစေ။ (1 John 4:7)",
+            "ယုံကြည်ခြင်းဖြင့် ကယ်တင်ခြင်းရသည်။ (Ephesians 2:8)",
+            "သခင်ကို ချီးမြှင့်၍ သာယာစေပါ။ (Psalm 100:4)",
+            "အားလုံးကို ချစ်ခြင်းဖြင့် ပြုမူပါ။ (Matthew 22:39)"
+        ]
+        for v in verses:
+            cur.execute("INSERT INTO verses (text) VALUES (?)", (v,))
+    # sample quizzes (5)
+    cur.execute("SELECT COUNT(*) FROM quizzes")
+    if cur.fetchone()[0] == 0:
+        quizzes = [
+            ("ဘုရားသခင်သည် ဘယ်သူလဲ။", "တစ်ဦးတည်းသော ဘုရား", "တစ်ဦးမဟုတ်ဘူး", "တစ်ဦးတည်းသော ဘုရား", "မသိ", "A"),
+            ("ယေရှုခရစ်၏ သင်ကြားချက်အဓိကမှာ?", "ချစ်ခြင်း", "စွမ်းအား", "ကြောက်ရွံ့ခြင်း", "အမြတ်", "A"),
+            ("ဘုရားကျမ်းစာ၏ ပထမဆုံးစာအုပ်က ဘာလဲ?", "Genesis", "Exodus", "Leviticus", "Numbers", "A"),
+            ("တရားမျှတမှုကို ဘယ်သူက သင်ကြားသလဲ?", "ယေရှု", "ပေါက်တော်", "ဆာလမန်", "မသိ", "A"),
+            ("ယုံကြည်ခြင်းဖြင့် ဘာရရှိသလဲ?", "ကယ်တင်ခြင်း", "အကြွေး", "အလုပ်", "အိမ်", "A")
+        ]
+        for q in quizzes:
+            cur.execute("INSERT INTO quizzes (question, option_a, option_b, option_c, option_d, answer) VALUES (?,?,?,?,?,?)", q)
     conn.commit()
     conn.close()
 
-def add_user(user_id:int, username:str, first_name:str, last_name:str, joined_at:str):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("INSERT OR REPLACE INTO users (id, username, first_name, last_name, joined_at) VALUES (?, ?, ?, ?, ?)",
-                (user_id, username, first_name, last_name, joined_at))
-    conn.commit()
-    conn.close()
+# Chat registry
+def add_chat(chat_id, chat_type, title=None, username=None):
+    with _lock:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("INSERT OR IGNORE INTO chats (chat_id, chat_type, title, username) VALUES (?,?,?,?)",
+                    (chat_id, chat_type, title, username))
+        conn.commit()
+        conn.close()
 
-# Simple wrappers for CRUD used by handlers
-def get_about() -> Optional[str]:
+def get_random_verse():
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT content FROM about WHERE id=1")
+    cur.execute("SELECT text FROM verses ORDER BY RANDOM() LIMIT 1")
     row = cur.fetchone()
     conn.close()
-    return row["content"] if row else None
+    return row["text"] if row else None
 
-def set_about(content:str):
+def get_about():
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("INSERT OR REPLACE INTO about (id, content) VALUES (1, ?)", (content,))
+    cur.execute("SELECT text FROM about WHERE id=1")
+    row = cur.fetchone()
+    conn.close()
+    return row["text"] if row else ""
+
+def set_about(text):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("UPDATE about SET text=? WHERE id=1", (text,))
     conn.commit()
     conn.close()
 
-def list_contacts() -> List[sqlite3.Row]:
+# Contacts
+def list_contacts():
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM contacts ORDER BY name")
+    cur.execute("SELECT name, phone FROM contacts")
     rows = cur.fetchall()
     conn.close()
     return rows
@@ -146,55 +102,44 @@ def list_contacts() -> List[sqlite3.Row]:
 def add_contact(name, phone):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("INSERT INTO contacts (name, phone) VALUES (?, ?)", (name, phone))
+    cur.execute("INSERT INTO contacts (name, phone) VALUES (?,?)", (name, phone))
     conn.commit()
     conn.close()
 
 def clear_all_data():
     conn = get_conn()
     cur = conn.cursor()
-    tables = ["users","about","contacts","verses","events","birthdays","prayers","quiz","scores","reports"]
+    tables = ["chats","contacts","events","birthdays","verses","prayers","quizzes","quiz_scores","reports"]
     for t in tables:
         cur.execute(f"DELETE FROM {t}")
     conn.commit()
     conn.close()
 
-def export_db_bytes() -> bytes:
-    with open(DB_PATH, "rb") as f:
-        return f.read()
-
-def import_db_bytes(data: bytes):
-    with open(DB_PATH, "wb") as f:
-        f.write(data)
-
-# Additional DB helpers for verses, events, birthdays, prayers, quiz, scores, reports
-def add_verse(verse, date):
+# Events
+def list_events():
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("INSERT INTO verses (verse, date) VALUES (?, ?)", (verse, date))
-    conn.commit()
-    conn.close()
-
-def get_today_verses(date):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM verses WHERE date = ?", (date,))
+    cur.execute("SELECT id, title, datetime, location, note FROM events ORDER BY datetime")
     rows = cur.fetchall()
     conn.close()
     return rows
 
-def add_event(title, datetime_str, location, description):
+def add_event(title, datetime_str, location, note):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("INSERT INTO events (title, datetime, location, description) VALUES (?, ?, ?, ?)",
-                (title, datetime_str, location, description))
+    cur.execute("INSERT INTO events (title, datetime, location, note) VALUES (?,?,?,?)",
+                (title, datetime_str, location, note))
     conn.commit()
     conn.close()
 
-def list_events():
+# Birthdays
+def list_birthdays(month=None):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM events ORDER BY datetime")
+    if month:
+        cur.execute("SELECT name, day, month, note FROM birthdays WHERE month=? ORDER BY day", (month,))
+    else:
+        cur.execute("SELECT name, day, month, note FROM birthdays ORDER BY month, day")
     rows = cur.fetchall()
     conn.close()
     return rows
@@ -202,75 +147,84 @@ def list_events():
 def add_birthday(name, day, month, note):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("INSERT INTO birthdays (name, day, month, note) VALUES (?, ?, ?, ?)", (name, day, month, note))
+    cur.execute("INSERT INTO birthdays (name, day, month, note) VALUES (?,?,?,?)", (name, day, month, note))
     conn.commit()
     conn.close()
 
-def birthdays_this_month(month):
+# Prayers
+def add_prayer(user_id, username, text):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM birthdays WHERE month = ?", (month,))
-    rows = cur.fetchall()
-    conn.close()
-    return rows
-
-def add_prayer(user_id, username, text, created_at):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("INSERT INTO prayers (user_id, username, text, created_at) VALUES (?, ?, ?, ?)",
-                (user_id, username, text, created_at))
+    cur.execute("INSERT INTO prayers (user_id, username, text) VALUES (?,?,?)", (user_id, username, text))
     conn.commit()
     conn.close()
 
 def list_prayers():
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM prayers ORDER BY created_at DESC")
+    cur.execute("SELECT username, text, created_at FROM prayers ORDER BY created_at DESC")
     rows = cur.fetchall()
     conn.close()
     return rows
 
-def add_quiz_question(q, a, b, c, d, ans):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("INSERT INTO quiz (question, choice_a, choice_b, choice_c, choice_d, answer) VALUES (?, ?, ?, ?, ?, ?)",
-                (q, a, b, c, d, ans))
-    conn.commit()
-    conn.close()
-
+# Quizzes
 def get_random_quiz():
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM quiz ORDER BY RANDOM() LIMIT 1")
+    cur.execute("SELECT id, question, option_a, option_b, option_c, option_d FROM quizzes ORDER BY RANDOM() LIMIT 1")
     row = cur.fetchone()
     conn.close()
     return row
 
-def update_score(user_id, username, delta):
+def check_quiz_answer(qid, choice):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT score FROM scores WHERE user_id = ?", (user_id,))
+    cur.execute("SELECT answer FROM quizzes WHERE id=?", (qid,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return False
+    return row["answer"].upper() == choice.upper()
+
+def add_quiz_score(user_id, username, delta):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id, score FROM quiz_scores WHERE user_id=?", (user_id,))
     row = cur.fetchone()
     if row:
-        new = row["score"] + delta
-        cur.execute("UPDATE scores SET score = ?, username = ? WHERE user_id = ?", (new, username, user_id))
+        cur.execute("UPDATE quiz_scores SET score = score + ? WHERE user_id=?", (delta, user_id))
     else:
-        cur.execute("INSERT INTO scores (user_id, username, score) VALUES (?, ?, ?)", (user_id, username, delta))
+        cur.execute("INSERT INTO quiz_scores (user_id, username, score) VALUES (?,?,?)", (user_id, username, max(0, delta)))
     conn.commit()
     conn.close()
 
-def top_scores(limit=10):
+def get_top_scores(limit=10):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM scores ORDER BY score DESC LIMIT ?", (limit,))
+    cur.execute("SELECT username, score FROM quiz_scores ORDER BY score DESC LIMIT ?", (limit,))
     rows = cur.fetchall()
     conn.close()
     return rows
 
-def add_report(user_id, username, text, created_at):
+# Reports
+def add_report(user_id, username, text):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("INSERT INTO reports (user_id, username, text, created_at) VALUES (?, ?, ?, ?)",
-                (user_id, username, text, created_at))
+    cur.execute("INSERT INTO reports (user_id, username, text) VALUES (?,?,?)", (user_id, username, text))
     conn.commit()
     conn.close()
+
+# Stats
+def get_stats():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM chats")
+    chats = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM prayers")
+    prayers = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM quizzes")
+    quizzes = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM verses")
+    verses = cur.fetchone()[0]
+    conn.close()
+    return {"chats": chats, "prayers": prayers, "quizzes": quizzes, "verses": verses}
