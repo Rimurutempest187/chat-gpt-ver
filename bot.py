@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Church Community Telegram Bot
-Ready-to-run version (python-telegram-bot v20+)
+Church Community Telegram Bot — Polished Ready-to-run (python-telegram-bot v20+)
 Create by : @Enoch_777
 """
 
@@ -13,15 +12,17 @@ import tempfile
 import random
 from datetime import datetime
 from functools import wraps
-from dotenv import load_dotenv
+from typing import Optional
 
+from dotenv import load_dotenv
 from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     InputFile,
+    Chat,
 )
-from telegram.constants import ChatAction
+from telegram.constants import ChatAction, ParseMode
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -31,86 +32,70 @@ from telegram.ext import (
     filters,
 )
 
-# Load .env
+# Load environment
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_IDS = os.getenv("ADMIN_IDS", "")  # comma separated admin telegram ids
+ADMIN_IDS = os.getenv("ADMIN_IDS", "")
 ADMIN_IDS = [int(x.strip()) for x in ADMIN_IDS.split(",") if x.strip().isdigit()]
+DB_PATH = os.getenv("DB_PATH", "church_bot.db")
 
 # Logging
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    level=logging.INFO,
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("church_bot")
 
-# Database
-DB_PATH = os.getenv("DB_PATH", "church_bot.db")
-
-
+# --- Database init ---------------------------------------------------------
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute(
-        """CREATE TABLE IF NOT EXISTS users (
+    cur.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
             username TEXT,
             first_name TEXT,
             last_name TEXT,
             started_at TEXT
-        )"""
-    )
-    cur.execute(
-        """CREATE TABLE IF NOT EXISTS groups (
+        );
+        CREATE TABLE IF NOT EXISTS groups (
             group_id INTEGER PRIMARY KEY,
             title TEXT,
             added_at TEXT
-        )"""
-    )
-    cur.execute(
-        """CREATE TABLE IF NOT EXISTS about (
+        );
+        CREATE TABLE IF NOT EXISTS about (
             id INTEGER PRIMARY KEY,
             content TEXT,
             edited_at TEXT
-        )"""
-    )
-    cur.execute(
-        """CREATE TABLE IF NOT EXISTS contacts (
+        );
+        CREATE TABLE IF NOT EXISTS contacts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT,
             phone TEXT
-        )"""
-    )
-    cur.execute(
-        """CREATE TABLE IF NOT EXISTS verses (
+        );
+        CREATE TABLE IF NOT EXISTS verses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             text TEXT
-        )"""
-    )
-    cur.execute(
-        """CREATE TABLE IF NOT EXISTS events (
+        );
+        CREATE TABLE IF NOT EXISTS events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             text TEXT
-        )"""
-    )
-    cur.execute(
-        """CREATE TABLE IF NOT EXISTS birthdays (
+        );
+        CREATE TABLE IF NOT EXISTS birthdays (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT,
             day INTEGER,
             month INTEGER
-        )"""
-    )
-    cur.execute(
-        """CREATE TABLE IF NOT EXISTS prayers (
+        );
+        CREATE TABLE IF NOT EXISTS prayers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
             username TEXT,
             text TEXT,
             created_at TEXT
-        )"""
-    )
-    cur.execute(
-        """CREATE TABLE IF NOT EXISTS quizzes (
+        );
+        CREATE TABLE IF NOT EXISTS quizzes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             question TEXT,
             opt_a TEXT,
@@ -118,51 +103,45 @@ def init_db():
             opt_c TEXT,
             opt_d TEXT,
             answer TEXT
-        )"""
-    )
-    cur.execute(
-        """CREATE TABLE IF NOT EXISTS quiz_scores (
+        );
+        CREATE TABLE IF NOT EXISTS quiz_scores (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
             username TEXT,
             score INTEGER DEFAULT 0
-        )"""
-    )
-    cur.execute(
-        """CREATE TABLE IF NOT EXISTS reports (
+        );
+        CREATE TABLE IF NOT EXISTS reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
             username TEXT,
             text TEXT,
             created_at TEXT
-        )"""
+        );
+        """
     )
     conn.commit()
     conn.close()
 
 
-# Utilities
+# --- Utilities -------------------------------------------------------------
+def is_admin(user_id: Optional[int]) -> bool:
+    return user_id in ADMIN_IDS
+
+
 def admin_only(func):
     @wraps(func)
-    async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
-        # Determine user id from message or callback_query
-        user = None
-        if update.effective_user:
-            user = update.effective_user
-        elif getattr(update, "callback_query", None) and update.callback_query.from_user:
-            user = update.callback_query.from_user
-
-        user_id = user.id if user else None
-        if user_id not in ADMIN_IDS:
-            # reply appropriately depending on update type
-            if update.message:
-                await update.message.reply_text("ဤ command ကို Admin များသာ အသုံးပြုနိုင်ပါသည်။")
-            elif getattr(update, "callback_query", None):
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        user = update.effective_user
+        uid = user.id if user else None
+        if not is_admin(uid):
+            if update.callback_query:
                 await update.callback_query.answer("ဤ command ကို Admin များသာ အသုံးပြုနိုင်ပါသည်။", show_alert=True)
+            elif update.message:
+                await update.message.reply_text("ဤ command ကို Admin များသာ အသုံးပြုနိုင်ပါသည်။")
             return
         return await func(update, context, *args, **kwargs)
 
-    return wrapped
+    return wrapper
 
 
 def save_user(user):
@@ -172,19 +151,13 @@ def save_user(user):
     cur = conn.cursor()
     cur.execute(
         "INSERT OR REPLACE INTO users (user_id, username, first_name, last_name, started_at) VALUES (?, ?, ?, ?, ?)",
-        (
-            user.id,
-            user.username or "",
-            user.first_name or "",
-            user.last_name or "",
-            datetime.utcnow().isoformat(),
-        ),
+        (user.id, user.username or "", user.first_name or "", user.last_name or "", datetime.utcnow().isoformat()),
     )
     conn.commit()
     conn.close()
 
 
-def save_group(chat):
+def save_group(chat: Chat):
     if not chat:
         return
     conn = sqlite3.connect(DB_PATH)
@@ -197,61 +170,66 @@ def save_group(chat):
     conn.close()
 
 
-# Handlers
+def html(text: str) -> dict:
+    return {"text": text, "parse_mode": ParseMode.HTML}
+
+
+# --- Command Handlers -----------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     save_user(user)
-    text = (
-        f"မင်္ဂလာပါ {user.first_name or user.username or ''}!\n\n"
+    welcome = (
+        f"မင်္ဂလာပါ <b>{user.first_name or user.username or 'အသုံးပြုသူ'}</b>!\n\n"
         "Church Community Bot သို့ ကြိုဆိုပါသည်။\n\n"
         "အသုံးပြုနိုင်သော command များအတွက် /help ကိုနှိပ်ပါ။\n\n"
-        "Create by : @Enoch_777"
+        "<i>Create by : @Enoch_777</i>"
     )
-    await update.message.reply_text(text)
+    await update.message.reply_html(welcome)
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
-        "အသုံးပြုနည်းလမ်းညွှန်\n\n"
-        "/start - စတင်အသုံးပြုခြင်း\n"
+        "<b>အသုံးပြုနည်း လမ်းညွှန်</b>\n\n"
+        "<b>Users</b>\n"
+        "/start - စတင်\n"
         "/help - လမ်းညွှန်\n"
         "/about - အသင်းတော် သမိုင်းနှင့် ရည်ရွယ်ချက်\n"
-        "/edabout - (Admin) about ကို edit\n"
         "/contact - တာဝန်ခံ ဖုန်းနံပါတ်များ\n"
-        "/edcontact - (Admin) contacts edit\n"
-        "/verse - ယနေ့ဖတ်ရန် ကျမ်းချက်များ\n"
-        "/edverse - (Admin) verses ထည့်/ပြင်\n"
+        "/verse - ယနေ့ဖတ်ရန် ကျမ်းချက် (Random)\n"
         "/events - လာမည့် အစီအစဉ်များ\n"
-        "/edevents - (Admin) events edit\n"
-        "/birthday - ယခုလ မွေးနေ့များ\n"
-        "/edbirthday - (Admin) birthday ထည့်/ပြင်\n"
+        "/birthday - မွေးနေ့စာရင်း\n"
         "/pray <text> - ဆုတောင်းပေးရန်\n"
         "/praylist - ဆုတောင်းစာရင်း\n"
         "/quiz - Random quiz (A/B/C/D)\n"
-        "/edquiz - (Admin) quiz ထည့်/ပြင်\n"
-        "/Tops - Quiz အမှတ် အများဆုံး\n"
-        "/broadcast - (Admin) Group များသို့ ပို့ရန်\n"
-        "/stats - (Admin) users/groups စာရင်း\n"
-        "/report <text> - အကြောင်းအရာ တင်ပြရန်\n"
-        "/backup - (Admin) DB backup\n"
-        "/restore - (Admin) DB restore (reply with file)\n"
-        "/allclear - (Admin) DB အားလုံး ဖျက်ရန်\n"
+        "/Tops - Quiz leaderboard\n"
+        "/report <text> - အကြောင်းအရာ တင်ပြရန်\n\n"
+        "<b>Admins</b>\n"
+        "/edabout - About edit\n"
+        "/edcontact - Contacts edit\n"
+        "/edverse - Add verses\n"
+        "/edevents - Events edit\n"
+        "/edbirthday - Birthdays edit\n"
+        "/edquiz - Add quizzes\n"
+        "/broadcast - Broadcast to groups (reply to message or /broadcast text)\n"
+        "/stats - Users/Groups count\n"
+        "/backup - Send DB file\n"
+        "/restore - Reply with DB file then /restore\n"
+        "/allclear - Reset all data\n\n"
+        "<i>Create by : @Enoch_777</i>"
     )
-    await update.message.reply_text(help_text)
+    await update.message.reply_html(help_text)
 
 
 # About
 @admin_only
 async def edabout(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Admin edits about text. Accepts message text after command or in reply.
     text = ""
     if update.message:
-        # prefer text after command
         text = update.message.text.partition(" ")[2].strip()
         if not text and update.message.reply_to_message and update.message.reply_to_message.text:
             text = update.message.reply_to_message.text.strip()
     if not text:
-        await update.message.reply_text("သင်ပြင်လိုသည့် about စာသားကို command နောက်တွင် ထည့်ပါ သို့မဟုတ် message ကို reply လုပ်ပါ။")
+        await update.message.reply_text("About စာသားကို command နောက်တွင် ထည့်ပါ သို့မဟုတ် message ကို reply လုပ်ပါ။")
         return
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -284,20 +262,19 @@ async def contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not rows:
         await update.message.reply_text("Contact မရှိသေးပါ။")
         return
-    text = "တာဝန်ခံများ\n\n" + "\n".join([f"{r[0]} - {r[1]}" for r in rows])
-    await update.message.reply_text(text)
+    lines = [f"• <b>{r[0]}</b> — {r[1]}" for r in rows]
+    await update.message.reply_html("<b>တာဝန်ခံများ</b>\n\n" + "\n".join(lines))
 
 
 @admin_only
 async def edcontact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Accept multiple lines: Name - Phone per line
     text = ""
     if update.message:
         text = update.message.text.partition(" ")[2].strip()
         if not text and update.message.reply_to_message and update.message.reply_to_message.text:
             text = update.message.reply_to_message.text.strip()
     if not text:
-        await update.message.reply_text("Contact များကို တစ်ကြောင်းစီ 'Name - Phone' အဖြစ် ထည့်ပါ။ (သို့မဟုတ် message ကို reply လုပ်ပါ)")
+        await update.message.reply_text("Contact များကို တစ်ကြောင်းစီ 'Name - Phone' အဖြစ် ထည့်ပါ။")
         return
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     conn = sqlite3.connect(DB_PATH)
@@ -309,7 +286,7 @@ async def edcontact(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cur.execute("INSERT INTO contacts (name, phone) VALUES (?, ?)", (name.strip(), phone.strip()))
     conn.commit()
     conn.close()
-    await update.message.reply_text("Contacts အား အောင်မြင်စွာ ထည့်ပြီးပါပြီ။")
+    await update.message.reply_text("Contacts ထည့်ပြီးပါပြီ။")
 
 
 # Verses
@@ -328,14 +305,13 @@ async def verse(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def edverse(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Accept multiple verses separated by newline. Use reply or text after command.
     text = ""
     if update.message:
         text = update.message.text.partition(" ")[2].strip()
         if not text and update.message.reply_to_message and update.message.reply_to_message.text:
             text = update.message.reply_to_message.text.strip()
     if not text:
-        await update.message.reply_text("Verses များကို တစ်ကြောင်းစီ ထည့်ပါ။ (သို့မဟုတ် message ကို reply လုပ်ပါ)")
+        await update.message.reply_text("Verses များကို တစ်ကြောင်းစီ ထည့်ပါ။")
         return
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     conn = sqlite3.connect(DB_PATH)
@@ -357,8 +333,8 @@ async def events(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not rows:
         await update.message.reply_text("Events မရှိသေးပါ။")
         return
-    text = "လာမည့် အစီအစဉ်များ\n\n" + "\n\n".join([r[0] for r in rows])
-    await update.message.reply_text(text)
+    text = "<b>လာမည့် အစီအစဉ်များ</b>\n\n" + "\n\n".join([r[0] for r in rows])
+    await update.message.reply_html(text)
 
 
 @admin_only
@@ -369,7 +345,7 @@ async def edevents(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not text and update.message.reply_to_message and update.message.reply_to_message.text:
             text = update.message.reply_to_message.text.strip()
     if not text:
-        await update.message.reply_text("Events များကို တစ်ကြောင်းစီ ထည့်ပါ။ (သို့မဟုတ် message ကို reply လုပ်ပါ)")
+        await update.message.reply_text("Events များကို တစ်ကြောင်းစီ ထည့်ပါ။")
         return
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     conn = sqlite3.connect(DB_PATH)
@@ -392,21 +368,19 @@ async def birthday(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not rows:
         await update.message.reply_text("Birthday မရှိသေးပါ။")
         return
-    # Show birthdays for current month first (but list all)
-    text_lines = [f"{r[0]} - {r[1]}/{r[2]}" for r in rows]
-    await update.message.reply_text("မွေးနေ့စာရင်း\n\n" + "\n".join(text_lines))
+    lines = [f"• <b>{r[0]}</b> — {r[1]}/{r[2]}" for r in rows]
+    await update.message.reply_html("<b>မွေးနေ့စာရင်း</b>\n\n" + "\n".join(lines))
 
 
 @admin_only
 async def edbirthday(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Accept lines: Name - DD/MM or Name - DD MM
     text = ""
     if update.message:
         text = update.message.text.partition(" ")[2].strip()
         if not text and update.message.reply_to_message and update.message.reply_to_message.text:
             text = update.message.reply_to_message.text.strip()
     if not text:
-        await update.message.reply_text("Birthday များကို တစ်ကြောင်းစီ 'Name - DD/MM' အဖြစ် ထည့်ပါ။ (သို့မဟုတ် message ကို reply လုပ်ပါ)")
+        await update.message.reply_text("Birthday များကို တစ်ကြောင်းစီ 'Name - DD/MM' အဖြစ် ထည့်ပါ။")
         return
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     conn = sqlite3.connect(DB_PATH)
@@ -447,27 +421,26 @@ async def pray(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def praylist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute("SELECT username, text, created_at FROM prayers ORDER BY id DESC")
+    cur.execute("SELECT username, text, created_at FROM prayers ORDER BY id DESC LIMIT 50")
     rows = cur.fetchall()
     conn.close()
     if not rows:
         await update.message.reply_text("ဆုတောင်းစာရင်း မရှိသေးပါ။")
         return
-    text = "ဆုတောင်းများ\n\n" + "\n\n".join([f"@{r[0]}: {r[1]}" for r in rows])
-    await update.message.reply_text(text)
+    lines = [f"• @{r[0]}: {r[1]}" for r in rows]
+    await update.message.reply_text("ဆုတောင်းများ\n\n" + "\n".join(lines))
 
 
 # Quiz
 @admin_only
 async def edquiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Format per quiz: Question | A | B | C | D | AnswerLetter
     text = ""
     if update.message:
         text = update.message.text.partition(" ")[2].strip()
         if not text and update.message.reply_to_message and update.message.reply_to_message.text:
             text = update.message.reply_to_message.text.strip()
     if not text:
-        await update.message.reply_text("Quiz များကို တစ်ကြောင်းစီ 'Question | A | B | C | D | Answer' အဖြစ် ထည့်ပါ။ (သို့မဟုတ် message ကို reply လုပ်ပါ)")
+        await update.message.reply_text("Quiz များကို တစ်ကြောင်းစီ 'Question | A | B | C | D | Answer' အဖြစ် ထည့်ပါ။")
         return
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     conn = sqlite3.connect(DB_PATH)
@@ -500,7 +473,7 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("A", callback_data=f"quiz|{qid}|A"), InlineKeyboardButton("B", callback_data=f"quiz|{qid}|B")],
         [InlineKeyboardButton("C", callback_data=f"quiz|{qid}|C"), InlineKeyboardButton("D", callback_data=f"quiz|{qid}|D")],
     ]
-    await update.message.reply_text(f"{question}\n\nA. {a}\nB. {b}\nC. {c_opt}\nD. {d}", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_html(f"<b>Quiz</b>\n\n{question}\n\nA. {a}\nB. {b}\nC. {c_opt}\nD. {d}", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def quiz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -508,11 +481,11 @@ async def quiz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not query:
         return
     await query.answer()
-    data = query.data  # format quiz|qid|choice
+    data = query.data
     try:
         _, qid, choice = data.split("|")
     except Exception:
-        await query.edit_message_text("Invalid data.")
+        await query.edit_message_text("Invalid quiz data.")
         return
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -524,7 +497,6 @@ async def quiz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     correct = row[0].upper()
     user = query.from_user
-    # update score
     cur.execute("SELECT id, score FROM quiz_scores WHERE user_id = ?", (user.id,))
     r = cur.fetchone()
     if r:
@@ -553,18 +525,16 @@ async def tops(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not rows:
         await update.message.reply_text("အမှတ်စာရင်း မရှိသေးပါ။")
         return
-    text = "Quiz Tops\n\n" + "\n".join([f"@{r[0]} - {r[1]}" for r in rows])
-    await update.message.reply_text(text)
+    lines = [f"• @{r[0]} — {r[1]}" for r in rows]
+    await update.message.reply_html("<b>Quiz Leaderboard</b>\n\n" + "\n".join(lines))
 
 
-# Broadcast
+# Broadcast / Stats / Report / Backup / Restore / Allclear
 @admin_only
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Admin can reply to a message or send /broadcast <text>
     msg = update.message
     if not msg:
         return
-    # gather groups
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute("SELECT group_id FROM groups")
@@ -574,40 +544,36 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("ပို့ရန် Group မရှိသေးပါ။")
         return
 
+    sent = 0
     if msg.reply_to_message:
         target = msg.reply_to_message
-        sent = 0
         for gid in groups:
             try:
                 if target.photo:
-                    # send photo to group
                     await context.bot.send_chat_action(gid, ChatAction.UPLOAD_PHOTO)
                     await context.bot.send_photo(chat_id=gid, photo=target.photo[-1].file_id, caption=target.caption or "")
                 elif target.text:
                     await context.bot.send_message(chat_id=gid, text=target.text)
                 else:
-                    # forward generic
                     await context.bot.forward_message(chat_id=gid, from_chat_id=target.chat_id, message_id=target.message_id)
                 sent += 1
             except Exception as e:
-                logger.warning(f"Broadcast to {gid} failed: {e}")
+                logger.warning(f"Broadcast failed to {gid}: {e}")
         await update.message.reply_text(f"Broadcast ပြီးပါပြီ။ ပို့ခဲ့သည့် Group အရေအတွက်: {sent}")
     else:
         text = msg.text.partition(" ")[2].strip()
         if not text:
-            await update.message.reply_text("Broadcast အတွက် ပို့လိုသည့် စာသားကို ထည့်ပါ သို့မဟုတ် ပို့လိုသည့် message ကို reply လုပ်ပါ။")
+            await update.message.reply_text("Broadcast အတွက် စာသားထည့်ပါ သို့မဟုတ် ပို့လိုသည့် message ကို reply လုပ်ပါ။")
             return
-        sent = 0
         for gid in groups:
             try:
                 await context.bot.send_message(chat_id=gid, text=text)
                 sent += 1
             except Exception as e:
-                logger.warning(f"Broadcast to {gid} failed: {e}")
+                logger.warning(f"Broadcast failed to {gid}: {e}")
         await update.message.reply_text(f"Broadcast ပြီးပါပြီ။ ပို့ခဲ့သည့် Group အရေအတွက်: {sent}")
 
 
-# Stats
 @admin_only
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_PATH)
@@ -620,7 +586,6 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Users: {users_count}\nGroups: {groups_count}")
 
 
-# Report
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.partition(" ")[2].strip() if update.message and update.message.text else ""
     if not text:
@@ -635,10 +600,8 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("သင့် report ကို မှတ်သားပြီးပါပြီ။ Admin များသို့ အကြောင်းကြားပေးပါမည်။")
 
 
-# Backup / Restore / Allclear
 @admin_only
 async def backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # send DB file
     if not os.path.exists(DB_PATH):
         await update.message.reply_text("Database မတွေ့ပါ။")
         return
@@ -648,7 +611,6 @@ async def backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def restore(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Admin should reply with a file to this command
     if not update.message or not update.message.reply_to_message or not update.message.reply_to_message.document:
         await update.message.reply_text("Restore လုပ်ရန် DB ဖိုင်ကို message reply ဖြင့် ပေးပို့ပါ။")
         return
@@ -657,7 +619,6 @@ async def restore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tmp = tempfile.NamedTemporaryFile(delete=False)
     await f.download_to_drive(tmp.name)
     tmp.close()
-    # replace DB
     try:
         os.replace(tmp.name, DB_PATH)
         await update.message.reply_text("Restore အောင်မြင်ပါသည်။")
@@ -667,7 +628,6 @@ async def restore(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def allclear(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # remove DB file and re-init
     try:
         if os.path.exists(DB_PATH):
             os.remove(DB_PATH)
@@ -677,7 +637,7 @@ async def allclear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Database အားလုံး ဖျက်ပြီး အသစ်စတင်ထားပါပြီ။")
 
 
-# Generic handlers to capture groups and store group id
+# Generic listener to capture groups and users
 async def message_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     if chat and chat.type in ("group", "supergroup"):
@@ -688,10 +648,10 @@ async def message_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Error handler
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+    logger.exception("Exception while handling an update: %s", context.error)
 
 
-# Main
+# --- Main -----------------------------------------------------------------
 def main():
     init_db()
     if not BOT_TOKEN:
@@ -699,7 +659,7 @@ def main():
         return
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Commands - users
+    # User commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("about", about))
@@ -726,15 +686,14 @@ def main():
     app.add_handler(CommandHandler("restore", restore))
     app.add_handler(CommandHandler("allclear", allclear))
 
-    # Listeners and callbacks
+    # Callbacks and listeners
     app.add_handler(CallbackQueryHandler(quiz_callback, pattern=r"^quiz\|"))
-    # Keep message_listener for non-command messages to capture groups and users
     app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), message_listener))
 
     app.add_error_handler(error_handler)
 
     logger.info("Bot started")
-    app.run_polling()
+    app.run_polling(allowed_updates=None)
 
 
 if __name__ == "__main__":
