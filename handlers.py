@@ -1,302 +1,344 @@
-## File: `handlers.py`
-
-import os
-import asyncio
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ContextTypes
-from db import get_db
-from utils import is_admin, format_event, format_contact
-from datetime import datetime
-
-DB = None
-
-async def init(db_path):
-    global DB
-    DB = get_db(db_path)
-    await DB.init()
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram.ext import ContextTypes, ConversationHandler, CommandHandler, MessageHandler, filters
+from db import *
+from utils import now_iso, format_event, footer
+from config import ADMIN_IDS
+import io
 
 # /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    text = (
-        f"မင်္ဂလာပါ {user.first_name or ''}!\n\n"
-        "Church Community Bot မှ ကြိုဆိုပါသည်။\n\n"
-        "အသုံးပြုရန် /help ကို အသုံးပြုပါ။\n\n"
-        "Create by : @Enoch_777"
-    )
+    add_user(user.id, user.username or "", user.first_name or "", user.last_name or "", now_iso())
+    text = f"မင်္ဂလာပါ {user.first_name or user.username or 'Member'}!\n\nChurch Community Bot သို့ ကြိုဆိုပါတယ်။{footer()}"
     await update.message.reply_text(text)
-    # register user
-    await DB.execute(
-        "INSERT OR IGNORE INTO users (telegram_id, username, first_name, last_name, joined_at) VALUES (?,?,?,?,?)",
-        (user.id, user.username or '', user.first_name or '', user.last_name or '', datetime.utcnow().isoformat()),
-    )
 
 # /help
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    txt = (
-        "/start — စတင်အသုံးပြုရန်\n"
-        "/help — ညွှန်ကြားချက်များ\n"
-        "/about — အသင်းအကြောင်း\n"
-        "/contact — တာဝန်ခံ ဖုန်းနံပါတ်များ\n"
-        "/verse — ယနေ့ဖတ်ရန်ကျမ်းချက်\n"
-        "/events — လာမည့်အစီအစဉ်များ\n"
-        "/birthday — ယခုလ မွေးနေ့များ\n"
-        "/pray <text> — စာရင်းထည့်ရန်\n"
-        "/praylist — ဆုတောင်းစာရင်းများ\n"
-        "/quiz — ကွစ်ဇ်ကစားရန်\n"
-        "/Tops — ကွစ်ဇ် အကောင်းဆုံးများ\n"
-        "/report <text> — အကြောင်းအရာတင်ပြရန်\n"
+    text = (
+        "/start - စတင်အသုံးပြုခြင်း\n"
+        "/help - လမ်းညွှန်\n"
+        "/about - အသင်းအကြောင်း\n"
+        "/eabout - (Admin) about edit\n"
+        "/contact - တာဝန်ခံ ဖုန်းနံပါတ်များ\n"
+        "/econtact - (Admin) edit contacts\n"
+        "/verse - ယနေ့ဖတ်ရန် ကျမ်းချက်များ\n"
+        "/events - လာမည့်အစီအစဉ်များ\n"
+        "/eevents - (Admin) edit events\n"
+        "/birthday - ယခုလ မွေးနေ့များ\n"
+        "/ebirthday - (Admin) add birthday\n"
+        "/pray <text> - ဆုတောင်းပေးရန်\n"
+        "/praylist - ဆုတောင်းစာရင်း\n"
+        "/quiz - ကျမ်းစာ ဉာဏ်စမ်း\n"
+        "/Tops - Quiz ranking\n"
+        "/broadcast - (Admin) သတင်းပို့ရန်\n"
+        "/stats - (Admin) အသုံးပြုသူ အချက်အလက်\n"
+        "/report <text> - သတင်းတင်ပြရန်\n"
+        "/backup - DB export (Admin)\n"
+        "/restore - DB import (Admin) (send file)\n"
+        "/allclear - (Admin) data ဖျက်ရန်\n"
     )
-    await update.message.reply_text(txt)
+    await update.message.reply_text(text)
 
-# /eabout and /about
-async def eabout(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not is_admin(user.id):
-        await update.message.reply_text("Admin only command.")
-        return
-    text = ' '.join(context.args)
-    if not text:
-        await update.message.reply_text("Usage: /eabout <text>")
-        return
-    await DB.execute("INSERT OR REPLACE INTO settings (key,value) VALUES ('about',?)", (text,))
-    await update.message.reply_text("About text updated.")
-
+# /about and /eabout
 async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    row = await DB.fetchone("SELECT value FROM settings WHERE key='about'")
-    await update.message.reply_text(row['value'] if row else "(မသတ်မှတ်ထားသေးပါ)")
-
-# /contact /econtact
-async def contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    rows = await DB.fetchall("SELECT * FROM contacts ORDER BY id")
-    if not rows:
-        await update.message.reply_text("No contacts set.")
-        return
-    text = '\n'.join([format_contact(r) for r in rows])
-    await update.message.reply_text(text)
-
-async def econtact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not is_admin(user.id):
-        await update.message.reply_text("Admin only command.")
-        return
-    # expect: /econtact Name|Phone
-    payload = ' '.join(context.args)
-    if '|' not in payload:
-        await update.message.reply_text("Usage: /econtact Name|Phone (use | as separator)")
-        return
-    name, phone = [p.strip() for p in payload.split('|',1)]
-    await DB.execute("INSERT INTO contacts (name,phone) VALUES (?,?)", (name, phone))
-    await update.message.reply_text("Contact added.")
-
-# /verse (daily verse)
-async def verse(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    today = datetime.utcnow().date().isoformat()
-    row = await DB.fetchone("SELECT text FROM verses WHERE date=?", (today,))
-    if row:
-        await update.message.reply_text(row['text'])
+    content = get_about()
+    if content:
+        await update.message.reply_text(content + footer())
     else:
-        await update.message.reply_text("No verse set for today.")
+        await update.message.reply_text("အသင်းအကြောင်း မရှိသေးပါ။")
 
-# /events /eevents
-async def events(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    rows = await DB.fetchall("SELECT * FROM events ORDER BY datetime")
+# Conversation states for editing about
+EABOUT = range(1)
+async def eabout_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id not in ADMIN_IDS:
+        await update.message.reply_text("သင်သည် admin မဟုတ်ပါ။")
+        return ConversationHandler.END
+    await update.message.reply_text("အသင်းအကြောင်းကို အသစ်ထည့်ပါ။")
+    return 0
+
+async def eabout_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    set_about(text)
+    await update.message.reply_text("Updated.")
+    return ConversationHandler.END
+
+# /contact and /econtact
+async def contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    rows = list_contacts()
     if not rows:
-        await update.message.reply_text("No events")
+        await update.message.reply_text("Contact မရှိသေးပါ။")
         return
-    text = '\n\n'.join([format_event(r) for r in rows])
+    text = "Contacts:\n" + "\n".join([f"{r['name']} - {r['phone']}" for r in rows])
     await update.message.reply_text(text)
 
-async def eevents(update: Update, context: ContextTypes.DEFAULT_TYPE):
+ECONTACT = range(1)
+async def econtact_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if not is_admin(user.id):
-        await update.message.reply_text("Admin only command.")
+    if user.id not in ADMIN_IDS:
+        await update.message.reply_text("သင်သည် admin မဟုတ်ပါ။")
+        return ConversationHandler.END
+    await update.message.reply_text("Add contact as: Name - Phone")
+    return 0
+
+async def econtact_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if "-" not in text:
+        await update.message.reply_text("Format: Name - Phone")
+        return ConversationHandler.END
+    name, phone = [s.strip() for s in text.split("-", 1)]
+    add_contact(name, phone)
+    await update.message.reply_text("Contact added.")
+    return ConversationHandler.END
+
+# /verse
+async def verse(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from datetime import date
+    today = date.today().isoformat()
+    rows = get_today_verses(today)
+    if not rows:
+        await update.message.reply_text("ယနေ့အတွက် verse မရှိသေးပါ။")
         return
-    payload = ' '.join(context.args)
-    # expect: Title|YYYY-MM-DD HH:MM|Location|Description
-    if '|' not in payload:
-        await update.message.reply_text("Usage: /eevents Title|YYYY-MM-DD HH:MM|Location|Description")
+    text = "\n\n".join([r["verse"] for r in rows])
+    await update.message.reply_text(text)
+
+# /events and /eevents
+async def events_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    rows = list_events()
+    if not rows:
+        await update.message.reply_text("မည်သည့် event မရှိသေးပါ။")
         return
-    title, dt, location, desc = [p.strip() for p in payload.split('|',3)]
-    await DB.execute("INSERT INTO events (title,datetime,location,description) VALUES (?,?,?,?)", (title, dt, location, desc))
+    text = "\n\n".join([format_event(r) for r in rows])
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+EEVENTS = range(1)
+async def eevents_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id not in ADMIN_IDS:
+        await update.message.reply_text("သင်သည် admin မဟုတ်ပါ။")
+        return ConversationHandler.END
+    await update.message.reply_text("Add event as: Title | YYYY-MM-DD HH:MM | Location | Description")
+    return 0
+
+async def eevents_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    parts = [p.strip() for p in text.split("|")]
+    if len(parts) < 4:
+        await update.message.reply_text("Format မှားနေပါသည်။")
+        return ConversationHandler.END
+    title, dt, loc, desc = parts[:4]
+    add_event(title, dt, loc, desc)
     await update.message.reply_text("Event added.")
+    return ConversationHandler.END
 
-# /birthday /ebirthday
+# /birthday and /ebirthday
 async def birthday(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    rows = await DB.fetchall("SELECT * FROM birthdays")
+    from datetime import date
+    m = date.today().month
+    rows = birthdays_this_month(m)
     if not rows:
-        await update.message.reply_text("No birthdays set.")
+        await update.message.reply_text("ယခုလတွင် မွေးနေ့ မရှိသေးပါ။")
         return
-    text = '\n'.join([f"{r['name']} — {r['day_month']}" for r in rows])
+    text = "\n".join([f"{r['name']} - {r['day']}/{r['month']} {r['note'] or ''}" for r in rows])
     await update.message.reply_text(text)
 
-async def ebirthday(update: Update, context: ContextTypes.DEFAULT_TYPE):
+EBIRTHDAY = range(1)
+async def ebirthday_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if not is_admin(user.id):
-        await update.message.reply_text("Admin only command.")
-        return
-    payload = ' '.join(context.args)
-    # expect: Name|MM-DD
-    if '|' not in payload:
-        await update.message.reply_text("Usage: /ebirthday Name|MM-DD")
-        return
-    name, mmdd = [p.strip() for p in payload.split('|',1)]
-    await DB.execute("INSERT INTO birthdays (name,day_month) VALUES (?,?)", (name, mmdd))
-    await update.message.reply_text("Birthday added.")
+    if user.id not in ADMIN_IDS:
+        await update.message.reply_text("သင်သည် admin မဟုတ်ပါ။")
+        return ConversationHandler.END
+    await update.message.reply_text("Add birthday as: Name - DD - MM - Note(optional)")
+    return 0
 
-# /pray /praylist
+async def ebirthday_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    parts = [p.strip() for p in text.split("-")]
+    if len(parts) < 3:
+        await update.message.reply_text("Format မှားနေပါသည်။")
+        return ConversationHandler.END
+    name = parts[0]
+    day = int(parts[1])
+    month = int(parts[2])
+    note = parts[3] if len(parts) > 3 else ""
+    add_birthday(name, day, month, note)
+    await update.message.reply_text("Birthday added.")
+    return ConversationHandler.END
+
+# /pray and /praylist
 async def pray(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    text = ' '.join(context.args)
+    text = " ".join(context.args) if context.args else (update.message.text or "")
     if not text:
-        await update.message.reply_text("Usage: /pray <text>")
+        await update.message.reply_text("ဆုတောင်းလိုသော အချက်ကို ရိုက်ထည့်ပါ။ /pray <text>")
         return
-    await DB.execute("INSERT INTO prayers (telegram_id,username,text,created_at) VALUES (?,?,?,?)",
-                     (user.id, user.username or '', text, datetime.utcnow().isoformat()))
-    await update.message.reply_text("Your prayer request has been recorded.")
+    add_prayer(user.id, user.username or user.first_name, text, now_iso())
+    await update.message.reply_text("သင့်ဆုတောင်းကို မှတ်တမ်းတင်ပြီးပါပြီ။")
 
 async def praylist(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    rows = await DB.fetchall("SELECT * FROM prayers ORDER BY id DESC")
+    rows = list_prayers()
     if not rows:
-        await update.message.reply_text("No prayers recorded.")
+        await update.message.reply_text("ဆုတောင်းစာရင်း မရှိသေးပါ။")
         return
-    text = '\n\n'.join([f"@{r['username']} — {r['text']}" for r in rows])
+    text = "\n\n".join([f"{r['username'] or r['user_id']}: {r['text']}" for r in rows])
     await update.message.reply_text(text)
 
-# /report
-async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    text = ' '.join(context.args)
-    if not text:
-        await update.message.reply_text("Usage: /report <text>")
+# /quiz and quiz flow (simple)
+async def quiz_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = get_random_quiz()
+    if not q:
+        await update.message.reply_text("Quiz မရှိသေးပါ။ Admin သို့မဟုတ် /eevents ကဲ့သို့ admin tools ဖြင့် ထည့်ပါ။")
         return
-    await DB.execute("INSERT INTO reports (telegram_id,username,text,created_at) VALUES (?,?,?,?)",
-                     (user.id, user.username or '', text, datetime.utcnow().isoformat()))
-    await update.message.reply_text("Report sent. Thank you.")
+    keyboard = [
+        [InlineKeyboardButton("A", callback_data=f"quiz|{q['id']}|A"),
+         InlineKeyboardButton("B", callback_data=f"quiz|{q['id']}|B")],
+        [InlineKeyboardButton("C", callback_data=f"quiz|{q['id']}|C"),
+         InlineKeyboardButton("D", callback_data=f"quiz|{q['id']}|D")]
+    ]
+    text = f"{q['question']}\nA. {q['choice_a']}\nB. {q['choice_b']}\nC. {q['choice_c']}\nD. {q['choice_d']}"
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-# /quiz and callbacks
-from random import choice
+from telegram.ext import CallbackQueryHandler
 
-async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    rows = await DB.fetchall("SELECT * FROM quiz_questions")
-    if not rows:
-        await update.message.reply_text("No quiz questions available.")
-        return
-    q = choice(rows)
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("A", callback_data=f"quiz|{q['id']}|a"),
-        InlineKeyboardButton("B", callback_data=f"quiz|{q['id']}|b"),
-        InlineKeyboardButton("C", callback_data=f"quiz|{q['id']}|c"),
-        InlineKeyboardButton("D", callback_data=f"quiz|{q['id']}|d"),
-    ]])
-    txt = f"{q['question']}\nA: {q['a']}\nB: {q['b']}\nC: {q['c']}\nD: {q['d']}"
-    await update.message.reply_text(txt, reply_markup=kb)
-
-async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def quiz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data
-    if not data.startswith('quiz|'):
+    data = query.data  # format quiz|id|choice
+    try:
+        _, qid, choice = data.split("|")
+    except:
         return
-    _, qid, choice_letter = data.split('|')
-    q = await DB.fetchone("SELECT * FROM quiz_questions WHERE id=?", (int(qid),))
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM quiz WHERE id = ?", (qid,))
+    q = cur.fetchone()
+    conn.close()
     if not q:
         await query.edit_message_text("Question not found.")
         return
-    correct = (q['answer'].lower() == choice_letter.lower())
+    correct = q["answer"].upper()
     user = query.from_user
-    if correct:
-        # increment score
-        row = await DB.fetchone("SELECT * FROM quiz_scores WHERE telegram_id=?", (user.id,))
-        if row:
-            await DB.execute("UPDATE quiz_scores SET score = score + 1 WHERE telegram_id=?", (user.id,))
-        else:
-            await DB.execute("INSERT INTO quiz_scores (telegram_id,username,score) VALUES (?,?,?)", (user.id, user.username or '', 1))
-        await query.edit_message_text(f"✅ Correct! Answer: {q[q['answer']]} ")
+    if choice.upper() == correct:
+        update_score(user.id, user.username or user.first_name, 1)
+        await query.edit_message_text("Correct! +1 point")
     else:
-        await query.edit_message_text(f"❌ Incorrect. Correct answer: {q[q['answer']]} ")
+        await query.edit_message_text(f"Wrong. Correct answer: {correct}")
 
+# /Tops
 async def tops(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    rows = await DB.fetchall("SELECT username,score FROM quiz_scores ORDER BY score DESC LIMIT 10")
+    rows = top_scores(10)
     if not rows:
         await update.message.reply_text("No scores yet.")
         return
-    text = "\n".join([f"{i+1}. @{r['username']} — {r['score']}" for i, r in enumerate(rows)])
+    text = "Top Scores:\n" + "\n".join([f"{i+1}. {r['username']} - {r['score']}" for i, r in enumerate(rows)])
     await update.message.reply_text(text)
 
 # /broadcast (admin)
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+BROADCAST_WAIT = range(1)
+async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if not is_admin(user.id):
-        await update.message.reply_text("Admin only")
-        return
-    # two modes: reply-to-message -> forward that message to all users
-    # or /broadcast Your message text -> send text to all users
-    users = await DB.fetchall("SELECT telegram_id FROM users")
-    if update.message.reply_to_message:
-        # forward the replied message to everyone
-        msg_to_forward = update.message.reply_to_message
-        await update.message.reply_text(f"Sending to {len(users)} users...")
-        for u in users:
-            try:
-                await context.bot.copy_message(chat_id=u['telegram_id'], from_chat_id=msg_to_forward.chat_id, message_id=msg_to_forward.message_id)
-            except Exception:
-                continue
-        await update.message.reply_text("Broadcast complete.")
-    else:
-        text = ' '.join(context.args)
-        if not text:
-            await update.message.reply_text("Usage: /broadcast <text> or reply to a message and run /broadcast")
-            return
-        await update.message.reply_text(f"Sending to {len(users)} users...")
-        for u in users:
-            try:
-                await context.bot.send_message(chat_id=u['telegram_id'], text=text)
-            except Exception:
-                continue
-        await update.message.reply_text("Broadcast complete.")
+    if user.id not in ADMIN_IDS:
+        await update.message.reply_text("Admin only.")
+        return ConversationHandler.END
+    await update.message.reply_text("Send the message to broadcast. You may attach a photo. Text only or photo + caption.")
+    return 0
 
-# /stats (admin)
+async def broadcast_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id not in ADMIN_IDS:
+        await update.message.reply_text("Admin only.")
+        return ConversationHandler.END
+    # collect all users
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM users")
+    rows = cur.fetchall()
+    conn.close()
+    user_ids = [r["id"] for r in rows]
+    # message content
+    if update.message.photo:
+        file = await update.message.photo[-1].get_file()
+        bio = io.BytesIO()
+        await file.download_to_memory(out=bio)
+        bio.seek(0)
+        caption = update.message.caption or ""
+        for uid in user_ids:
+            try:
+                await context.bot.send_photo(chat_id=uid, photo=bio, caption=caption)
+                bio.seek(0)
+            except Exception:
+                continue
+    else:
+        text = update.message.text or ""
+        for uid in user_ids:
+            try:
+                await context.bot.send_message(chat_id=uid, text=text)
+            except Exception:
+                continue
+    await update.message.reply_text("Broadcast sent.")
+    return ConversationHandler.END
+
+# /stats
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if not is_admin(user.id):
-        await update.message.reply_text("Admin only")
+    if user.id not in ADMIN_IDS:
+        await update.message.reply_text("Admin only.")
         return
-    total = await DB.fetchone("SELECT COUNT(*) as c FROM users")
-    cnt = total['c'] if total else 0
-    await update.message.reply_text(f"Total registered users: {cnt}")
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) as c FROM users")
+    users_count = cur.fetchone()["c"]
+    cur.execute("SELECT COUNT(*) as c FROM prayers")
+    prayers_count = cur.fetchone()["c"]
+    cur.execute("SELECT COUNT(*) as c FROM reports")
+    reports_count = cur.fetchone()["c"]
+    conn.close()
+    text = f"Users: {users_count}\nPrayers: {prayers_count}\nReports: {reports_count}"
+    await update.message.reply_text(text)
 
-# /backup /restore
+# /report
+async def report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    text = " ".join(context.args) if context.args else (update.message.text or "")
+    if not text:
+        await update.message.reply_text("Report text ထည့်ပါ။ /report <text>")
+        return
+    add_report(user.id, user.username or user.first_name, text, now_iso())
+    await update.message.reply_text("Report received. Thank you.")
+
+# /backup and /restore and /allclear
 async def backup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if not is_admin(user.id):
-        await update.message.reply_text("Admin only")
+    if user.id not in ADMIN_IDS:
+        await update.message.reply_text("Admin only.")
         return
-    path = await DB.backup()
-    await update.message.reply_text(f"Backup created: {path}")
+    data = export_db_bytes()
+    await update.message.reply_document(document=io.BytesIO(data), filename="church_backup.db")
+    await update.message.reply_text("Backup sent.")
 
 async def restore_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if not is_admin(user.id):
-        await update.message.reply_text("Admin only")
+    if user.id not in ADMIN_IDS:
+        await update.message.reply_text("Admin only.")
         return
-    # Expect admin to reply to a document with /restore
-    if not update.message.reply_to_message or not update.message.reply_to_message.document:
-        await update.message.reply_text("Reply to the DB file (as document) with /restore to restore")
+    if not update.message.document:
+        await update.message.reply_text("Please send the DB file as a document.")
         return
-    doc = update.message.reply_to_message.document
-    fpath = f"data/{doc.file_name}"
-    await doc.get_file().download_to_drive(custom_path=fpath)
-    await DB.restore_from_file(fpath)
-    await update.message.reply_text("Database restored from uploaded file. Please restart the bot if necessary.")
+    doc = update.message.document
+    bio = io.BytesIO()
+    await doc.get_file().download_to_memory(out=bio)
+    bio.seek(0)
+    import_db_bytes(bio.read())
+    await update.message.reply_text("Database restored. Restart bot to apply changes.")
 
-# /allclear
-async def allclear(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def allclear_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if not is_admin(user.id):
-        await update.message.reply_text("Admin only")
+    if user.id not in ADMIN_IDS:
+        await update.message.reply_text("Admin only.")
         return
-    await DB.clear_all()
+    clear_all_data()
     await update.message.reply_text("All data cleared.")
 
-# fallback handlers for unknown commands can be added in bot.py
+# fallback / unknown
+async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Unknown command. /help ကိုကြည့်ပါ။")
