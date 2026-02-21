@@ -1,39 +1,39 @@
 # handlers.py
-import sqlite3
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
-from telegram.ext import ContextTypes
-from db import get_conn
-from utils import admin_only
-import config
+from telegram import Update, InputMediaPhoto
+from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ConversationHandler
+import db, utils
 from datetime import datetime
-import random
+import io
 
-# Helper: register user
-def register_user(user):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("INSERT OR IGNORE INTO users (id, username, first_name, last_name) VALUES (?, ?, ?, ?)",
-                (user.id, user.username or "", user.first_name or "", user.last_name or ""))
-    conn.commit()
-    conn.close()
+# States for conversations
+BROADCAST_WAIT = 1
+RESTORE_WAIT = 2
+QUIZ_ANSWER = 3
+EDABOUT_WAIT = 4
+EDCONTACT_WAIT = 5
+EDVERSE_WAIT = 6
+EDEVENTS_WAIT = 7
+EDBIRTHDAY_WAIT = 8
+EDQUIZ_WAIT = 9
+PRAY_WAIT = 10
+REPORT_WAIT = 11
 
 # /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    register_user(user)
+    await db.execute(
+        "INSERT OR REPLACE INTO users(user_id, username, first_name, last_name, is_bot, joined_at) VALUES(?,?,?,?,?,?)",
+        (user.id, user.username or "", user.first_name or "", user.last_name or "", int(user.is_bot), utils.now_iso())
+    )
     text = (
-        f"မင်္ဂလာပါ {user.first_name or user.username or 'Friend'}!\n\n"
+        f"မင်္ဂလာပါ {user.first_name or ''}!\n\n"
         "Church Community Bot သို့ ကြိုဆိုပါတယ်။\n\n"
         "Commands:\n"
         "/help - အသုံးပြုနည်း\n"
-        "/about - အသင်းတော် သမိုင်းနှင့် ရည်ရွယ်ချက်\n"
-        "/verse - ယနေ့ဖတ်ရန် ကျမ်းချက် (Random)\n"
-        "/events - လာမည့် အစီအစဉ်များ\n"
-        "/birthday - ယခုလ မွေးနေ့များ\n"
-        "/pray - ဆုတောင်းပို့ရန် (သင့်ဆုတောင်းကို)\n"
-        "/praylist - ဆုတောင်းစာရင်း\n"
-        "/quiz - Random Quiz\n"
-        "/report - အကြောင်းအရာ တင်ပြရန်\n\n"
+        "/about - အသင်းအကြောင်း\n"
+        "/verse - ယနေ့ဖတ်ရန်ကျမ်းချက်\n"
+        "/events - လာမည့်အစီအစဉ်များ\n"
+        "/quiz - စမ်းသပ်မေးခွန်း\n\n"
         "Create by : @Enoch_777"
     )
     await update.message.reply_text(text)
@@ -41,440 +41,446 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # /help
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
-        "Bot အသုံးပြုနည်း လမ်းညွှန်\n\n"
-        "- Admin commands: /edabout, /edcontact, /edverse, /edevents, /edbirthday, /edquiz, /broadcast, /stats, /backup, /restore, /allclear\n"
-        "- Users: /start, /help, /about, /contact, /verse, /events, /birthday, /pray, /praylist, /quiz, /tops, /report\n\n"
-        "Bulk insert: admin-only commands (/edverse, /edquiz) မှာ entries များကို တစ်ကြိမ်တည်းထည့်ရန် delimiter ကို အသုံးပြုပါ။\n"
-        f"Delimiter: {config.BULK_DELIM}\n"
+        "အသုံးပြုနည်း - Commands\n"
+        "/start - စတင်\n"
+        "/help - ဒီစာမျက်နှာ\n"
+        "/about - အသင်းအကြောင်း\n"
+        "/verse - Random verse\n"
+        "/events - Upcoming events\n"
+        "/birthday - ဒီလ မွေးနေ့များ\n"
+        "/pray - ဆုတောင်းပေးရန် (/pray <text>)\n"
+        "/praylist - ဆုတောင်းစာရင်း\n"
+        "/quiz - Random quiz\n"
+        "/tops - Quiz အမှတ်အများဆုံး\n"
+        "/report - အကြောင်းအရာတင်ပြရန် (/report <text>)\n\n"
+        "Admin commands:\n"
+        "/edabout - edit about\n"
+        "/edcontact - edit contacts\n"
+        "/edverse - add verses (bulk allowed)\n"
+        "/edevents - edit events\n"
+        "/edbirthday - add birthdays\n"
+        "/edquiz - add quizzes (bulk allowed)\n"
+        "/broadcast - send message to all groups/users\n"
+        "/stats - show counts\n"
+        "/backup - get DB backup\n"
+        "/restore - restore DB (upload file)\n"
+        "/allclear - delete all data\n"
     )
     await update.message.reply_text(text)
 
-# /about (user)
+# /about and /edabout
 async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT value FROM settings WHERE key='about'")
-    row = cur.fetchone()
-    conn.close()
-    if row:
-        await update.message.reply_text(row["value"])
+    row = await db.fetchone("SELECT text FROM about")
+    if row and row[0]:
+        await update.message.reply_text(row[0])
     else:
-        await update.message.reply_text("အသင်းတော် သမိုင်းနှင့် ရည်ရွယ်ချက် မရှိသေးပါ။ (Admin သို့ /edabout ဖြင့် ထည့်ပါ)")
+        await update.message.reply_text("အသင်းအကြောင်း မရှိသေးပါ။ (Admin များ /edabout ဖြင့် ထည့်ပါ)")
 
-# /edabout (admin)
-@admin_only
+async def edabout_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not utils.is_admin(user.id):
+        await update.message.reply_text("Admin only.")
+        return ConversationHandler.END
+    await update.message.reply_text("အသင်းအကြောင်းကို ရေးထည့်ပါ (send message).")
+    return EDBOUT_WAIT if False else EDBOUT_WAIT  # placeholder
+
+# Simpler: single message handler for edabout
 async def edabout(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = "သင့်ရဲ့ အသင်းတော် သမိုင်း/ရည်ရွယ်ချက်ကို ဒီ command နဲ့ reply message အဖြစ် ပို့ပါ။"
-    if context.args:
-        new = " ".join(context.args)
-    else:
-        # if reply
-        if update.message.reply_to_message and update.message.reply_to_message.text:
-            new = update.message.reply_to_message.text
-        else:
-            await update.message.reply_text(text)
-            return
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('about', ?)", (new,))
-    conn.commit()
-    conn.close()
-    await update.message.reply_text("About ကို update ပြီးပါပြီ။")
+    user = update.effective_user
+    if not utils.is_admin(user.id):
+        await update.message.reply_text("Admin only.")
+        return
+    text = update.message.text_html or update.message.text
+    await db.execute("DELETE FROM about")
+    await db.execute("INSERT INTO about(text) VALUES(?)", (text,))
+    await update.message.reply_text("Updated about.")
 
-# /contact (user)
+# /contact and /edcontact
 async def contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT value FROM settings WHERE key='contact'")
-    row = cur.fetchone()
-    conn.close()
-    if row:
-        await update.message.reply_text(row["value"])
-    else:
-        await update.message.reply_text("Contact မရှိသေးပါ။ (Admin သို့ /edcontact ဖြင့် ထည့်ပါ)")
+    rows = await db.fetchall("SELECT name, phone FROM contacts")
+    if not rows:
+        await update.message.reply_text("Contact list is empty.")
+        return
+    text = "\n".join([f"{r[0]} - {r[1]}" for r in rows])
+    await update.message.reply_text(text)
 
-# /edcontact (admin)
-@admin_only
 async def edcontact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.args:
-        new = " ".join(context.args)
-    else:
-        if update.message.reply_to_message and update.message.reply_to_message.text:
-            new = update.message.reply_to_message.text
-        else:
-            await update.message.reply_text("Contact list ထည့်ရန် message ကို reply လုပ်၍ ပို့ပါ။")
-            return
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('contact', ?)", (new,))
-    conn.commit()
-    conn.close()
-    await update.message.reply_text("Contact ကို update ပြီးပါပြီ။")
+    user = update.effective_user
+    if not utils.is_admin(user.id):
+        await update.message.reply_text("Admin only.")
+        return
+    # Expect lines like: Name - Phone
+    lines = utils.parse_bulk_lines(update.message.text)
+    # If first token is /edcontact, remove it
+    if lines and lines[0].startswith("/edcontact"):
+        lines = lines[1:]
+    await db.execute("DELETE FROM contacts")
+    for line in lines:
+        if "-" in line:
+            name, phone = [p.strip() for p in line.split("-", 1)]
+            await db.execute("INSERT OR REPLACE INTO contacts(name, phone) VALUES(?,?)", (name, phone))
+    await update.message.reply_text("Contacts updated.")
 
-# /verse (user) random
+# /verse and /edverse
+import random
 async def verse(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM verses")
-    rows = cur.fetchall()
-    conn.close()
+    rows = await db.fetchall("SELECT text FROM verses")
     if not rows:
-        await update.message.reply_text("Verse မရှိသေးပါ။ (Admin သို့ /edverse ဖြင့် ထည့်ပါ)")
+        await update.message.reply_text("No verses available.")
         return
-    v = random.choice(rows)
-    await update.message.reply_text(v["text"])
+    text = random.choice(rows)[0]
+    await update.message.reply_text(text)
 
-# /edverse (admin) bulk insert
-@admin_only
 async def edverse(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Accept either reply text or args
-    if context.args:
-        payload = " ".join(context.args)
-    elif update.message.reply_to_message and update.message.reply_to_message.text:
-        payload = update.message.reply_to_message.text
-    else:
-        await update.message.reply_text(f"Verses များကို တစ်ကြိမ်တည်းထည့်ရန် delimiter `{config.BULK_DELIM}` ဖြင့် message ကို reply လုပ်၍ ပို့ပါ။")
+    user = update.effective_user
+    if not utils.is_admin(user.id):
+        await update.message.reply_text("Admin only.")
         return
-    parts = [p.strip() for p in payload.split(config.BULK_DELIM) if p.strip()]
-    conn = get_conn()
-    cur = conn.cursor()
-    for p in parts:
-        cur.execute("INSERT INTO verses (text) VALUES (?)", (p,))
-    conn.commit()
-    conn.close()
-    await update.message.reply_text(f"{len(parts)} verse(s) ထည့်ပြီးပါပြီ။")
+    # Accept bulk: each line is a verse
+    lines = utils.parse_bulk_lines(update.message.text)
+    # Remove command line if present
+    if lines and lines[0].startswith("/edverse"):
+        lines = lines[1:]
+    for line in lines:
+        await db.execute("INSERT INTO verses(text) VALUES(?)", (line,))
+    await update.message.reply_text(f"Added {len(lines)} verses.")
 
-# /events (user)
-async def events(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM events ORDER BY datetime")
-    rows = cur.fetchall()
-    conn.close()
+# /events and /edevents
+async def events_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    rows = await db.fetchall("SELECT id, text FROM events ORDER BY id")
     if not rows:
-        await update.message.reply_text("မရှိသေးပါ။ (Admin သို့ /edevents ဖြင့် ထည့်ပါ)")
+        await update.message.reply_text("No events.")
         return
-    text = "လာမည့် အစီအစဉ်များ:\n\n"
-    for r in rows:
-        text += f"- {r['title']} | {r['datetime']} | {r['location'] or '-'}\n"
+    text = "\n\n".join([f"{r[0]}. {r[1]}" for r in rows])
     await update.message.reply_text(text)
 
-# /edevents (admin)
-@admin_only
 async def edevents(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Expect format: Title ||| datetime ||| location ||| note
-    if context.args:
-        payload = " ".join(context.args)
-    elif update.message.reply_to_message and update.message.reply_to_message.text:
-        payload = update.message.reply_to_message.text
-    else:
-        await update.message.reply_text(f"Event ထည့်ရန် format: Title{config.BULK_DELIM}datetime{config.BULK_DELIM}location (multiple events separated by {config.BULK_DELIM})")
+    user = update.effective_user
+    if not utils.is_admin(user.id):
+        await update.message.reply_text("Admin only.")
         return
-    parts = [p.strip() for p in payload.split(config.BULK_DELIM) if p.strip()]
-    conn = get_conn()
-    cur = conn.cursor()
-    # If single event with fields separated by '|||' then insert one
-    if len(parts) >= 2 and ("|" in parts[0] or len(parts) == 4):
-        # try parse as single event fields
-        if len(parts) >= 2:
-            title = parts[0]
-            dt = parts[1]
-            loc = parts[2] if len(parts) >=3 else ""
-            note = parts[3] if len(parts) >=4 else ""
-            cur.execute("INSERT INTO events (title, datetime, location, note) VALUES (?, ?, ?, ?)", (title, dt, loc, note))
-            conn.commit()
-            conn.close()
-            await update.message.reply_text("Event ထည့်ပြီးပါပြီ။")
-            return
-    # Otherwise treat each part as a simple event text
-    for p in parts:
-        cur.execute("INSERT INTO events (title, datetime, location, note) VALUES (?, ?, ?, ?)", (p, "", "", ""))
-    conn.commit()
-    conn.close()
-    await update.message.reply_text(f"{len(parts)} event(s) ထည့်ပြီးပါပြီ။")
+    lines = utils.parse_bulk_lines(update.message.text)
+    if lines and lines[0].startswith("/edevents"):
+        lines = lines[1:]
+    await db.execute("DELETE FROM events")
+    for line in lines:
+        await db.execute("INSERT INTO events(text) VALUES(?)", (line,))
+    await update.message.reply_text(f"Events updated ({len(lines)}).")
 
-# /birthday (user)
+# /birthday and /edbirthday
 async def birthday(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM birthdays ORDER BY month, day")
-    rows = cur.fetchall()
-    conn.close()
+    rows = await db.fetchall("SELECT name, month, day FROM birthdays ORDER BY month, day")
     if not rows:
-        await update.message.reply_text("Birthday list မရှိသေးပါ။ (Admin သို့ /edbirthday ဖြင့် ထည့်ပါ)")
+        await update.message.reply_text("No birthdays.")
         return
-    text = "ယခုလ မွေးနေ့များ:\n\n"
-    now_month = datetime.now().month
-    for r in rows:
-        if r["month"] == now_month:
-            text += f"- {r['name']} ({r['day']}/{r['month']}) {r['note'] or ''}\n"
-    if text.strip() == "ယခုလ မွေးနေ့များ:\n\n":
-        text = "ယခုလ မွေးနေ့ရှိသူ မရှိသေးပါ။"
+    text = "\n".join([f"{r[0]} - {r[1]}/{r[2]}" for r in rows])
     await update.message.reply_text(text)
 
-# /edbirthday (admin) bulk insert: format name|day|month|note per line separated by BULK_DELIM
-@admin_only
 async def edbirthday(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.args:
-        payload = " ".join(context.args)
-    elif update.message.reply_to_message and update.message.reply_to_message.text:
-        payload = update.message.reply_to_message.text
-    else:
-        await update.message.reply_text(f"Birthday များကို တစ်ကြိမ်တည်းထည့်ရန် delimiter `{config.BULK_DELIM}` ဖြင့် message ကို reply လုပ်၍ ပို့ပါ။ Format per entry: name|day|month|note")
+    user = update.effective_user
+    if not utils.is_admin(user.id):
+        await update.message.reply_text("Admin only.")
         return
-    entries = [e.strip() for e in payload.split(config.BULK_DELIM) if e.strip()]
-    conn = get_conn()
-    cur = conn.cursor()
-    count = 0
-    for e in entries:
-        parts = [p.strip() for p in e.split("|")]
-        if len(parts) >= 3:
-            name = parts[0]
-            day = int(parts[1])
-            month = int(parts[2])
-            note = parts[3] if len(parts) >=4 else ""
-            cur.execute("INSERT INTO birthdays (name, day, month, note) VALUES (?, ?, ?, ?)", (name, day, month, note))
-            count += 1
-    conn.commit()
-    conn.close()
-    await update.message.reply_text(f"{count} birthday(s) ထည့်ပြီးပါပြီ။")
+    # Expect lines like: Name - MM-DD or Name - M D
+    lines = utils.parse_bulk_lines(update.message.text)
+    if lines and lines[0].startswith("/edbirthday"):
+        lines = lines[1:]
+    await db.execute("DELETE FROM birthdays")
+    for line in lines:
+        if "-" in line:
+            name, date = [p.strip() for p in line.split("-", 1)]
+            if "/" in date:
+                m, d = [int(x) for x in date.split("/", 1)]
+            elif "-" in date:
+                m, d = [int(x) for x in date.split("-", 1)]
+            else:
+                parts = date.split()
+                m, d = int(parts[0]), int(parts[1])
+            await db.execute("INSERT INTO birthdays(name, month, day) VALUES(?,?,?)", (name, m, d))
+    await update.message.reply_text("Birthdays updated.")
 
-# /pray (user)
+# /pray and /praylist
 async def pray(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if not update.message.reply_to_message and not context.args:
-        await update.message.reply_text("ဆုတောင်းကို message reply ဖြင့် ပို့ပါ (သို့) /pray <text>")
+    text = " ".join(context.args) if context.args else ""
+    if not text:
+        await update.message.reply_text("Use /pray <text> to submit a prayer request.")
         return
-    text = " ".join(context.args) if context.args else update.message.reply_to_message.text
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("INSERT INTO prayers (user_id, username, text) VALUES (?, ?, ?)", (user.id, user.username or "", text))
-    conn.commit()
-    conn.close()
-    await update.message.reply_text("သင့်ဆုတောင်းကို မှတ်သားပြီးပါပြီ။")
+    await db.execute("INSERT INTO prayers(user_id, username, text, created_at) VALUES(?,?,?,?)",
+                     (user.id, user.username or "", text, utils.now_iso()))
+    await update.message.reply_text("Your prayer request has been recorded.")
 
-# /praylist (user)
 async def praylist(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM prayers ORDER BY created_at DESC LIMIT 50")
-    rows = cur.fetchall()
-    conn.close()
+    rows = await db.fetchall("SELECT username, text, created_at FROM prayers ORDER BY id DESC")
     if not rows:
-        await update.message.reply_text("ဆုတောင်းစာရင်း မရှိသေးပါ။")
+        await update.message.reply_text("No prayer requests.")
         return
-    text = "ဆုတောင်းများ (နောက်ဆုံး 50):\n\n"
-    for r in rows:
-        text += f"- @{r['username'] or 'anonymous'}: {r['text']}\n"
+    text = "\n\n".join([f"{r[0]}: {r[1]}" for r in rows])
     await update.message.reply_text(text)
 
-# /quiz (user) random quiz
-async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM quizzes")
-    rows = cur.fetchall()
-    conn.close()
-    if not rows:
-        await update.message.reply_text("Quiz မရှိသေးပါ။ (Admin သို့ /edquiz ဖြင့် ထည့်ပါ)")
-        return
-    q = random.choice(rows)
-    text = f"{q['question']}\nA. {q['choice_a']}\nB. {q['choice_b']}\nC. {q['choice_c']}\nD. {q['choice_d']}\n\nReply with A/B/C/D to answer."
-    # store current quiz in user_data for checking
-    context.user_data["current_quiz"] = {"id": q["id"], "answer": q["answer"].upper()}
-    await update.message.reply_text(text)
-
-# handle quiz answer (simple)
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    txt = update.message.text.strip().upper()
-    if txt in ("A","B","C","D") and context.user_data.get("current_quiz"):
-        q = context.user_data.pop("current_quiz")
-        correct = q["answer"].upper()
-        user = update.effective_user
-        if txt == correct:
-            # increment score
-            conn = get_conn()
-            cur = conn.cursor()
-            cur.execute("SELECT * FROM quiz_scores WHERE user_id=?", (user.id,))
-            row = cur.fetchone()
-            if row:
-                cur.execute("UPDATE quiz_scores SET score = score + 1 WHERE user_id=?", (user.id,))
-            else:
-                cur.execute("INSERT INTO quiz_scores (user_id, username, score) VALUES (?, ?, ?)", (user.id, user.username or "", 1))
-            conn.commit()
-            conn.close()
-            await update.message.reply_text("မှန်ပါတယ်! +1 point")
-        else:
-            await update.message.reply_text(f"မမှန်ပါ။ မှန်答案: {correct}")
-        return
-    # fallback: ignore or treat as report
-    await update.message.reply_text("Command မသိပါ။ /help ကို ကြည့်ပါ။")
-
-# /edquiz (admin) bulk insert
-@admin_only
-async def edquiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Expect each quiz entry separated by BULK_DELIM, each entry fields separated by newline or '|'
-    if context.args:
-        payload = " ".join(context.args)
-    elif update.message.reply_to_message and update.message.reply_to_message.text:
-        payload = update.message.reply_to_message.text
-    else:
-        await update.message.reply_text(f"Quiz များကို တစ်ကြိမ်တည်းထည့်ရန် delimiter `{config.BULK_DELIM}` ဖြင့် message ကို reply လုပ်၍ ပို့ပါ။ Format per entry: question|A|B|C|D|answer_letter")
-        return
-    entries = [e.strip() for e in payload.split(config.BULK_DELIM) if e.strip()]
-    conn = get_conn()
-    cur = conn.cursor()
-    count = 0
-    for e in entries:
-        # try split by | or newline
-        parts = [p.strip() for p in e.replace("\n","|").split("|")]
-        if len(parts) >= 6:
-            q, a, b, c, d, ans = parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]
-            ans = ans.strip().upper()[0]
-            if ans not in ("A","B","C","D"):
-                continue
-            cur.execute("INSERT INTO quizzes (question, choice_a, choice_b, choice_c, choice_d, answer) VALUES (?, ?, ?, ?, ?, ?)",
-                        (q, a, b, c, d, ans))
-            count += 1
-    conn.commit()
-    conn.close()
-    await update.message.reply_text(f"{count} quiz(es) ထည့်ပြီးပါပြီ။")
-
-# /tops (quiz leaderboard)
-async def tops(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT username, score FROM quiz_scores ORDER BY score DESC LIMIT 10")
-    rows = cur.fetchall()
-    conn.close()
-    if not rows:
-        await update.message.reply_text("Leaderboard မရှိသေးပါ။")
-        return
-    text = "Quiz Top Scores:\n\n"
-    rank = 1
-    for r in rows:
-        text += f"{rank}. @{r['username'] or 'anonymous'} — {r['score']}\n"
-        rank += 1
-    await update.message.reply_text(text)
-
-# /broadcast (admin) - send text or photo to all groups and users
-@admin_only
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # If reply to a message, broadcast that message (text or photo)
-    bot = context.bot
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT id FROM groups")
-    groups = [r["id"] for r in cur.fetchall()]
-    cur.execute("SELECT id FROM users")
-    users = [r["id"] for r in cur.fetchall()]
-    conn.close()
-    if update.message.reply_to_message:
-        msg = update.message.reply_to_message
-        # if photo
-        if msg.photo:
-            file_id = msg.photo[-1].file_id
-            for gid in groups:
-                try:
-                    await bot.send_photo(chat_id=gid, photo=file_id, caption=msg.caption or "")
-                except Exception:
-                    pass
-            for uid in users:
-                try:
-                    await bot.send_photo(chat_id=uid, photo=file_id, caption=msg.caption or "")
-                except Exception:
-                    pass
-            await update.message.reply_text("Broadcast (photo) ပို့ပြီးပါပြီ။")
-            return
-        else:
-            text = msg.text or msg.caption or ""
-    else:
-        # use args as text
-        if context.args:
-            text = " ".join(context.args)
-        else:
-            await update.message.reply_text("Broadcast ပို့ရန် message ကို reply လုပ်၍ ပို့ပါ (သို့) /broadcast <text>")
-            return
-    for gid in groups:
-        try:
-            await bot.send_message(chat_id=gid, text=text)
-        except Exception:
-            pass
-    for uid in users:
-        try:
-            await bot.send_message(chat_id=uid, text=text)
-        except Exception:
-            pass
-    await update.message.reply_text("Broadcast ပို့ပြီးပါပြီ။")
-
-# /stats (admin)
-@admin_only
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) as c FROM users")
-    users = cur.fetchone()["c"]
-    cur.execute("SELECT COUNT(*) as c FROM groups")
-    groups = cur.fetchone()["c"]
-    cur.execute("SELECT COUNT(*) as c FROM verses")
-    verses = cur.fetchone()["c"]
-    cur.execute("SELECT COUNT(*) as c FROM quizzes")
-    quizzes = cur.fetchone()["c"]
-    conn.close()
-    text = f"Stats:\nUsers: {users}\nGroups: {groups}\nVerses: {verses}\nQuizzes: {quizzes}"
-    await update.message.reply_text(text)
-
-# /report (user)
+# /report
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if context.args:
-        text = " ".join(context.args)
-    elif update.message.reply_to_message and update.message.reply_to_message.text:
-        text = update.message.reply_to_message.text
-    else:
-        await update.message.reply_text("Report ပို့ရန် /report <text> သို့မဟုတ် message ကို reply လုပ်၍ ပို့ပါ။")
+    text = " ".join(context.args) if context.args else ""
+    if not text:
+        await update.message.reply_text("Use /report <text> to submit a report.")
         return
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("INSERT INTO reports (user_id, username, text) VALUES (?, ?, ?)", (user.id, user.username or "", text))
-    conn.commit()
-    conn.close()
-    await update.message.reply_text("Report ကို မှတ်သားပြီးပါပြီ။")
+    await db.execute("INSERT INTO reports(user_id, username, text, created_at) VALUES(?,?,?,?)",
+                     (user.id, user.username or "", text, utils.now_iso()))
+    await update.message.reply_text("Report submitted. Thank you.")
 
-# /backup (admin)
-@admin_only
-async def backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from db import backup_db
-    import time
-    ts = int(time.time())
-    path = f"backups/backup_{ts}.sql"
-    Path("backups").mkdir(parents=True, exist_ok=True)
-    backup_db(path)
-    await update.message.reply_text(f"Backup created: {path}")
+# /edquiz and /quiz and scoring
+async def edquiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not utils.is_admin(user.id):
+        await update.message.reply_text("Admin only.")
+        return
+    # Bulk format: each quiz block separated by blank line:
+    # Q: question
+    # A) choice
+    # B) choice
+    # C) choice
+    # D) choice
+    # Answer: A
+    text = update.message.text
+    if text.startswith("/edquiz"):
+        text = text[len("/edquiz"):].strip()
+    blocks = [b.strip() for b in text.split("\n\n") if b.strip()]
+    count = 0
+    for b in blocks:
+        lines = [l.strip() for l in b.splitlines() if l.strip()]
+        q = ""
+        a=b=c=d=ans=None
+        for line in lines:
+            if line.lower().startswith("q:"):
+                q = line[2:].strip()
+            elif line.upper().startswith("A)"):
+                a = line[2:].strip()
+            elif line.upper().startswith("B)"):
+                b = line[2:].strip()
+            elif line.upper().startswith("C)"):
+                c = line[2:].strip()
+            elif line.upper().startswith("D)"):
+                d = line[2:].strip()
+            elif line.lower().startswith("answer:"):
+                ans = line.split(":",1)[1].strip().upper()
+        if q and a and b and c and d and ans:
+            await db.execute(
+                "INSERT INTO quizzes(question, choice_a, choice_b, choice_c, choice_d, answer, created_at) VALUES(?,?,?,?,?,?,?)",
+                (q, a, b, c, d, ans, utils.now_iso())
+            )
+            count += 1
+    await update.message.reply_text(f"Added {count} quizzes.")
 
-# /restore (admin) - expects reply to a message containing dump text or file path (simple)
-@admin_only
-async def restore(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from db import restore_db_from_dump
-    if update.message.reply_to_message and update.message.reply_to_message.document:
-        # download file
-        doc = update.message.reply_to_message.document
-        f = await doc.get_file()
-        local = f"backups/{doc.file_name}"
-        await f.download_to_drive(local)
-        restore_db_from_dump(local)
-        await update.message.reply_text("Restore ပြီးပါပြီ။")
-    else:
-        await update.message.reply_text("Restore လုပ်ရန် backup file ကို reply လုပ်၍ ပို့ပါ။")
+# /quiz: send random quiz and expect answer via message like A/B/C/D
+async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    row = await db.fetchone("SELECT id, question, choice_a, choice_b, choice_c, choice_d, answer FROM quizzes ORDER BY RANDOM() LIMIT 1")
+    if not row:
+        await update.message.reply_text("No quizzes available.")
+        return
+    qid, question, a, b, c, d, answer = row
+    # store current quiz in user_data
+    context.user_data["current_quiz"] = {"id": qid, "answer": answer}
+    text = f"{question}\nA) {a}\nB) {b}\nC) {c}\nD) {d}\n\nReply with A/B/C/D."
+    await update.message.reply_text(text)
 
-# /allclear (admin)
-@admin_only
+# handle quiz answer messages
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    text = update.message.text.strip().upper() if update.message.text else ""
+    # check if user has current quiz
+    cq = context.user_data.get("current_quiz")
+    if cq and text in ("A","B","C","D"):
+        correct = (text == cq["answer"].upper())
+        if correct:
+            # increment score
+            row = await db.fetchone("SELECT score FROM quiz_scores WHERE user_id=?", (user.id,))
+            if row:
+                await db.execute("UPDATE quiz_scores SET score = score + 1 WHERE user_id=?", (user.id,))
+            else:
+                await db.execute("INSERT INTO quiz_scores(user_id, username, score) VALUES(?,?,?)", (user.id, user.username or "", 1))
+            await update.message.reply_text("Correct! ✅")
+        else:
+            await update.message.reply_text(f"Wrong. Correct answer: {cq['answer']}")
+        context.user_data.pop("current_quiz", None)
+        return
+    # not a quiz answer — ignore or handle other text commands
+    # fallback
+    return
+
+# /tops
+async def tops(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    rows = await db.fetchall("SELECT username, score FROM quiz_scores ORDER BY score DESC LIMIT 10")
+    if not rows:
+        await update.message.reply_text("No quiz scores yet.")
+        return
+    text = "\n".join([f"{i+1}. {r[0]} - {r[1]}" for i, r in enumerate(rows)])
+    await update.message.reply_text(text)
+
+# /stats
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not utils.is_admin(user.id):
+        await update.message.reply_text("Admin only.")
+        return
+    u = await db.fetchone("SELECT COUNT(*) FROM users")
+    g = await db.fetchone("SELECT COUNT(*) FROM groups")
+    v = await db.fetchone("SELECT COUNT(*) FROM verses")
+    q = await db.fetchone("SELECT COUNT(*) FROM quizzes")
+    text = f"Users: {u[0]}\nGroups: {g[0]}\nVerses: {v[0]}\nQuizzes: {q[0]}"
+    await update.message.reply_text(text)
+
+# /broadcast
+async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not utils.is_admin(user.id):
+        await update.message.reply_text("Admin only.")
+        return ConversationHandler.END
+    await update.message.reply_text("Send the broadcast message. You may attach a photo. The message will be sent to all stored groups and users.")
+    return BROADCAST_WAIT
+
+async def broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    # get message text and optional photo
+    text = update.message.caption if update.message.photo else update.message.text
+    photo = None
+    if update.message.photo:
+        # get highest resolution
+        photo_file = await update.message.photo[-1].get_file()
+        bio = io.BytesIO()
+        await photo_file.download_to_memory(out=bio)
+        bio.seek(0)
+        photo = bio
+    # fetch groups and users
+    groups = await db.fetchall("SELECT chat_id FROM groups")
+    users = await db.fetchall("SELECT user_id FROM users")
+    sent = 0
+    for g in groups:
+        try:
+            if photo:
+                await context.bot.send_photo(chat_id=g[0], photo=photo, caption=text)
+            else:
+                await context.bot.send_message(chat_id=g[0], text=text)
+            sent += 1
+        except Exception:
+            continue
+    for u in users:
+        try:
+            if photo:
+                await context.bot.send_photo(chat_id=u[0], photo=photo, caption=text)
+            else:
+                await context.bot.send_message(chat_id=u[0], text=text)
+            sent += 1
+        except Exception:
+            continue
+    await update.message.reply_text(f"Broadcast sent to {sent} chats (attempted).")
+    return ConversationHandler.END
+
+# /backup and /restore
+async def backup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not utils.is_admin(user.id):
+        await update.message.reply_text("Admin only.")
+        return
+    # send DB file
+    path = db.DB_PATH
+    try:
+        await update.message.reply_document(open(path, "rb"))
+    except Exception as e:
+        await update.message.reply_text(f"Backup failed: {e}")
+
+async def restore_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not utils.is_admin(user.id):
+        await update.message.reply_text("Admin only.")
+        return ConversationHandler.END
+    await update.message.reply_text("Please upload the backup .db file now.")
+    return RESTORE_WAIT
+
+async def restore_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Expect a document
+    doc = update.message.document
+    if not doc:
+        await update.message.reply_text("Please upload a file.")
+        return ConversationHandler.END
+    path = db.DB_PATH
+    file = await doc.get_file()
+    await file.download_to_drive(path)
+    await update.message.reply_text("Database restored. Restart the bot to apply changes.")
+    return ConversationHandler.END
+
+# /allclear
 async def allclear(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = get_conn()
-    cur = conn.cursor()
-    tables = ["verses","events","birthdays","prayers","quizzes","quiz_scores","reports","groups","users","settings"]
-    for t in tables:
-        cur.execute(f"DELETE FROM {t}")
-    conn.commit()
-    conn.close()
+    user = update.effective_user
+    if not utils.is_admin(user.id):
+        await update.message.reply_text("Admin only.")
+        return
+    # Drop all data
+    await db.execute("DELETE FROM users")
+    await db.execute("DELETE FROM groups")
+    await db.execute("DELETE FROM about")
+    await db.execute("DELETE FROM contacts")
+    await db.execute("DELETE FROM verses")
+    await db.execute("DELETE FROM events")
+    await db.execute("DELETE FROM birthdays")
+    await db.execute("DELETE FROM prayers")
+    await db.execute("DELETE FROM quizzes")
+    await db.execute("DELETE FROM quiz_scores")
+    await db.execute("DELETE FROM reports")
     await update.message.reply_text("All data cleared.")
+
+# track groups when bot added to group or receives message in group
+async def track_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    if chat.type in ("group", "supergroup"):
+        await db.execute("INSERT OR REPLACE INTO groups(chat_id, title, added_at) VALUES(?,?,?)",
+                         (chat.id, chat.title or "", utils.now_iso()))
+
+# register handlers function
+def register(dispatcher):
+    from telegram.ext import CommandHandler, MessageHandler, filters, ConversationHandler
+
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(CommandHandler("help", help_cmd))
+    dispatcher.add_handler(CommandHandler("about", about))
+    dispatcher.add_handler(CommandHandler("edabout", edabout))
+    dispatcher.add_handler(CommandHandler("contact", contact))
+    dispatcher.add_handler(CommandHandler("edcontact", edcontact))
+    dispatcher.add_handler(CommandHandler("verse", verse))
+    dispatcher.add_handler(CommandHandler("edverse", edverse))
+    dispatcher.add_handler(CommandHandler("events", events_cmd))
+    dispatcher.add_handler(CommandHandler("edevents", edevents))
+    dispatcher.add_handler(CommandHandler("birthday", birthday))
+    dispatcher.add_handler(CommandHandler("edbirthday", edbirthday))
+    dispatcher.add_handler(CommandHandler("pray", pray))
+    dispatcher.add_handler(CommandHandler("praylist", praylist))
+    dispatcher.add_handler(CommandHandler("report", report))
+    dispatcher.add_handler(CommandHandler("edquiz", edquiz))
+    dispatcher.add_handler(CommandHandler("quiz", quiz))
+    dispatcher.add_handler(CommandHandler("tops", tops))
+    dispatcher.add_handler(CommandHandler("stats", stats))
+    dispatcher.add_handler(CommandHandler("backup", backup_cmd))
+    dispatcher.add_handler(CommandHandler("restore", restore_start))
+    dispatcher.add_handler(CommandHandler("allclear", allclear))
+    dispatcher.add_handler(CommandHandler("broadcast", broadcast_start))
+
+    # Conversation handlers
+    bc_conv = ConversationHandler(
+        entry_points=[CommandHandler("broadcast", broadcast_start)],
+        states={BROADCAST_WAIT: [MessageHandler(filters.ALL & ~filters.COMMAND, broadcast_send)]},
+        fallbacks=[]
+    )
+    dispatcher.add_handler(bc_conv)
+
+    restore_conv = ConversationHandler(
+        entry_points=[CommandHandler("restore", restore_start)],
+        states={RESTORE_WAIT: [MessageHandler(filters.Document.ALL, restore_receive)]},
+        fallbacks=[]
+    )
+    dispatcher.add_handler(restore_conv)
+
+    # track groups
+    dispatcher.add_handler(MessageHandler(filters.ChatType.GROUPS, track_chat))
+    # generic message handler for quiz answers and admin text commands
+    dispatcher.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
