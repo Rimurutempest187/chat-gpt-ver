@@ -1,20 +1,20 @@
 # utils.py
-from functools import wraps
-from telegram import Update
-from telegram.ext import ContextTypes
-import config
+import os
+from datetime import datetime
+from typing import List
 
-def is_admin(user_id: int) -> bool:
-    return user_id in config.ADMINS
+def get_admin_ids():
+    raw = os.getenv("ADMIN_IDS", "")
+    if not raw:
+        return []
+    return [int(x.strip()) for x in raw.split(",") if x.strip().isdigit()]
 
-def admin_only(func):
-    @wraps(func)
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
-        user = update.effective_user
-        if not user:
-            return
-        if not is_admin(user.id):
-            await update.message.reply_text("ဤ command ကို အသုံးပြုခွင့် မရှိပါ။ (Admin only)")
-            return
-        return await func(update, context, *args, **kwargs)
-    return wrapper
+def is_admin(user_id: int):
+    return user_id in get_admin_ids()
+
+def now_iso():
+    return datetime.utcnow().isoformat()
+
+def parse_bulk_lines(text: str) -> List[str]:
+    # Accepts many lines; ignore empty lines; strip each
+    return [line.strip() for line in text.splitlines() if line.strip()]
