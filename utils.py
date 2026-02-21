@@ -1,20 +1,10 @@
 # utils.py
 import os
-from datetime import datetime
-from typing import List
+from dotenv import load_dotenv
+load_dotenv("config.env")
 
-def get_admin_ids():
-    raw = os.getenv("ADMIN_IDS", "")
-    if not raw:
-        return []
-    return [int(x.strip()) for x in raw.split(",") if x.strip().isdigit()]
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS","").split(",") if x.strip()]
 
-def is_admin(user_id: int):
-    return user_id in get_admin_ids()
-
-def now_iso():
-    return datetime.utcnow().isoformat()
-
-def parse_bulk_lines(text: str) -> List[str]:
-    # Accepts many lines; ignore empty lines; strip each
-    return [line.strip() for line in text.splitlines() if line.strip()]
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_IDS
