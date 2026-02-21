@@ -191,8 +191,6 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "<b>အသုံးပြုနည်း လမ်းညွှန်</b>\n\n"
         "<b>Users</b>\n"
-        "/start - စတင်\n"
-        "/help - လမ်းညွှန်\n"
         "/about - အသင်းတော် သမိုင်းနှင့် ရည်ရွယ်ချက်\n"
         "/contact - တာဝန်ခံ ဖုန်းနံပါတ်များ\n"
         "/verse - ယနေ့ဖတ်ရန် ကျမ်းချက် (Random)\n"
@@ -203,21 +201,9 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/quiz - Random quiz (A/B/C/D)\n"
         "/Tops - Quiz leaderboard\n"
         "/report <text> - အကြောင်းအရာ တင်ပြရန်\n\n"
-        "<b>Admins</b>\n"
-        "/edabout - About edit\n"
-        "/edcontact - Contacts edit\n"
-        "/edverse - Add verses\n"
-        "/edevents - Events edit\n"
-        "/edbirthday - Birthdays edit\n"
-        "/edquiz - Add quizzes\n"
-        "/broadcast - Broadcast to groups (reply to message or /broadcast text)\n"
-        "/stats - Users/Groups count\n"
-        "/backup - Send DB file\n"
-        "/restore - Reply with DB file then /restore\n"
-        "/allclear - Reset all data\n\n"
         "<i>Create by : @Enoch_777</i>"
     )
-    await update.message.reply_html(help_text)
+    await update.message.reply_text(help_text, parse_mode="HTML")
 
 
 # About
