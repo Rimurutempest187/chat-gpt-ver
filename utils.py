@@ -1,29 +1,20 @@
 # utils.py
-from config import ADMIN_IDS
+from functools import wraps
+from telegram import Update
+from telegram.ext import ContextTypes
+import config
 
-def is_admin(user_id):
-    return user_id in ADMIN_IDS
+def is_admin(user_id: int) -> bool:
+    return user_id in config.ADMINS
 
-def format_contacts(rows):
-    if not rows:
-        return "မည်သည့် တာဝန်ခံလည်း မရှိသေးပါ။"
-    lines = []
-    for r in rows:
-        lines.append(f"{r['name']} - {r['phone']}")
-    return "\n".join(lines)
-
-def format_events(rows):
-    if not rows:
-        return "လာမည့် အစီအစဉ် မရှိသေးပါ။"
-    lines = []
-    for r in rows:
-        lines.append(f"{r['title']} | {r['datetime']} | {r['location']} | {r['note']}")
-    return "\n".join(lines)
-
-def format_birthdays(rows):
-    if not rows:
-        return "ယခုလအတွင်း မွေးနေ့ မရှိပါ။"
-    lines = []
-    for r in rows:
-        lines.append(f"{r['name']} - {r['day']}/{r['month']} {r['note'] or ''}")
-    return "\n".join(lines)
+def admin_only(func):
+    @wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        user = update.effective_user
+        if not user:
+            return
+        if not is_admin(user.id):
+            await update.message.reply_text("ဤ command ကို အသုံးပြုခွင့် မရှိပါ။ (Admin only)")
+            return
+        return await func(update, context, *args, **kwargs)
+    return wrapper
