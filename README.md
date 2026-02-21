@@ -1,10 +1,7 @@
-# Church Community Telegram Bot
-
-## ပြင်ဆင်ရန်
-1. Python 3.8+ ကို သေချာထည့်ထားပါ။
-2. `config.py` ထဲတွင် `BOT_TOKEN` ကို သင့် token ဖြင့် ပြောင်းပါ။
-3. `config.py` ထဲတွင် `ADMIN_IDS` ကို admin user id များထည့်ပါ။
-
-## 설치
-```bash
-pip install -r requirements.txt
+## Setup
+1. Python 3.10+ install
+2. Create virtualenv and install:
+3. Edit `config.py`:
+- Set `BOT_TOKEN` to your bot token
+- Set `ADMINS` to Telegram user IDs of admins
+4. Run:
